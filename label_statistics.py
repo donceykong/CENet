@@ -107,7 +107,7 @@ def compute_label_statistics(root_path, config_path=None, sequences=None):
 
 
 def print_statistics(label_names, counts, total):
-    """Print per-label count and percentage."""
+    """Print per-label count, percentage, and ratio (ratios sum to 1.0)."""
     if total == 0:
         print("No points in any label file.")
         return
@@ -115,17 +115,20 @@ def print_statistics(label_names, counts, total):
     # All label IDs that appear in data or in config
     all_ids = sorted(set(counts.keys()) | set(label_names.keys()))
 
-    print(f"\n{'Label':<6} {'Name':<22} {'Count':>12} {'Percent':>10}")
-    print("-" * 54)
+    print(f"\n{'Label':<6} {'Name':<22} {'Count':>12} {'Percent':>10} {'Ratio':>12}")
+    print("-" * 66)
 
+    ratio_sum = 0.0
     for lid in all_ids:
         name = label_names.get(lid, f"unknown({lid})")
         cnt = counts.get(lid, 0)
         pct = 100.0 * cnt / total
-        print(f"{lid:<6} {name:<22} {cnt:>12} {pct:>9.2f}%")
+        ratio = cnt / total
+        ratio_sum += ratio
+        print(f"{lid:<6} {name:<22} {cnt:>12} {pct:>9.2f}% {ratio:>12.10f}")
 
-    print("-" * 54)
-    print(f"{'Total':<6} {'':<22} {total:>12} {100.0:>9.2f}%")
+    print("-" * 66)
+    print(f"{'Total':<6} {'':<22} {total:>12} {100.0:>9.2f}% {ratio_sum:>12.10f}")
 
 
 def main():
