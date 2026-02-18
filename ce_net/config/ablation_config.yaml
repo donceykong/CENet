@@ -1,0 +1,68 @@
+# data_extraction:
+# log_dir_path: "/media/donceykong/donceys_data_ssd/ablation_logs"
+log_dir_path: "/home/donceykong/Desktop/ARPG/projects/fall_2024/Lidar2OSM_FULL/Lidar2OSM/data/ablation_results/full_ablation_test2"
+show_vis: true            # Show visualizations or not
+save_pcds: false          # Save PCDs in ablation data
+verbose_output: true      #
+trial_count: 100          # Number of tests to run for each ablation parameter set
+
+# If using multithreading, make sure to set the env var OMP_NUM_THREADS to 1 beforehand!
+use_multiprocessing: true 
+number_of_cores: 5
+
+clipper_styles: ["semantic_filtering", "baseline_clipper"]        # Clipper styles to compare
+pointcloud_styles: ["inferred_full", "full", "osm", "inferred_osm"]                 # Pointcloud styles to test ("regular" and/or "osm")
+downsampling_styles: ["random_downsample"]                        # "random_downsample" and/or "voxel_downsample"
+voxel_leaf_size: 15.0                                             # If "voxel_downsample" is in downsampling_styles, this will be used
+max_points_list: [6000]                                           # Maximum points to be used for target & source pointclouds
+
+max_A_params:
+  min: 10000
+  max: 11000
+  step: 1000
+
+epsilon_params:
+  min: 10
+  max: 50
+  step: 10
+
+# assoc_matrix_sizes: [10000, 20000, 500] # TODO: use (max association mat sizes (min, max, inc))
+
+datasets:
+  # Datasets to ablate on
+  KITTI_360:
+    # number of osm scans in each seq-> 0: 10_482, 2: 11_226, 3: 0?, 4: 8136, 5: 6130, 6: 9056 , 7: 2_663, 9: 13_163 , 10: 2_788    
+    # number of osm scans in each seq-> 0: 10_482, 2: 11_226, 4: 8136, 6: 9056, 9: 13_163                       
+    enabled: true
+    root_path: "/media/donceykong/donceys_data_ssd/datasets/KITTI-360"
+    sequences: [0, 2] #, 4, 6, 9]            # Sequences from KITTI-360 dataset to use (0, 2, 9)
+    target_source_frames:
+      0:
+        target_frames: [100, 1000, 10]
+        source_frames: [500, 1100, 10]
+        # target_frames: [1000, 8100, 10]
+        # source_frames: [5000, 8100, 10]
+      # 1:
+      #   target_frames: [2000, 8100, 10]
+      #   source_frames: [3000, 7100, 10]
+      # 2:
+      #   target_frames: [1000, 6000, 10]
+      #   source_frames: [4000, 8100, 10]
+      # 3:
+      #   target_frames: [500, 2000, 10]
+      #   source_frames: [1000, 2500, 10]   
+
+  NUSCENES:
+    enabled: false
+    root_path: "/media/donceykong/donceys_data_ssd/datasets"
+    sequences: []
+    target_source_frames:
+
+  CU_MULTI:
+    enabled: true
+    root_path: "/media/donceykong/donceys_data_ssd/datasets/CU_MULTI/data"
+    sequences: ["main_campus/robot1"]
+    target_source_frames:
+          0:
+            target_frames: [100, 1000, 10]
+            source_frames: [500, 1100, 10]

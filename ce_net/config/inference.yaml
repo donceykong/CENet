@@ -1,0 +1,37 @@
+# TODO: Use dataset_name to determine paths of other fields
+dataset_path: /media/donceykong/donceys_data_ssd/datasets/CU_MULTI/data # path to dataset
+dataset_name: CU-MULTI  # "KITTI-360" or "CU-MULTI"
+infer_or_train: infer   # "train" or "infer"
+# data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/Lidar2OSM_FULL/Lidar2OSM/lidar2osm/config/data_cfg_cu_multi.yaml
+data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/Lidar2OSM_FULL/Lidar2OSM/lidar2osm/config/labels/semantic-kitti.yaml
+# environments: ["main_campus"]
+# robots: ["robot1", "robot2", "robot3", "robot4"]
+
+inference:
+  # For regular Semantic-KITTI labels
+  # model_path: /media/donceykong/donceys_data_ssd/lidar2osm_dirs/trained_models/semantic_kitti/1024_valid5 #/path/to/model
+  model_path: /media/donceykong/donceys_data_ssd/models/CENet/semantic_kitti/1024_valid5
+  # For KITTI-360 OSM-Semantic labels
+  # model_path: /media/donceykong/donceys_data_ssd/lidar2osm_dirs/trained_models/cumulti_osm_style/cenet_osm-1024
+  split: test # "valid", "train", or "test"
+
+training:
+  # Label config
+  # model_path: /media/donceykong/donceys_data_ssd/models/CENet/cumulti_osm_style
+  model_name: cenet_osm-512
+  use_progressive_growing: True
+
+  model_configs:
+    cenet_osm-512:
+      arch_config: ./config/arch/train/cenet_osm-512.yaml
+      model_name: cenet_osm-512
+
+    cenet_osm-1024:
+      arch_config: ./config/arch/train/cenet_osm-1024p.yaml
+      model_name: cenet_osm-1024
+      pretrained_model_path: ./models/cumulti_osm_style/cenet_osm-512
+
+    cenet_osm-2048:
+      arch_config: ./config/arch/train/cenet_osm-2048p.yaml
+      model_name: cenet_osm-2048
+      pretrained_model_path: ./models/cumulti_osm_style/cenet_osm-1024
