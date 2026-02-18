@@ -13,7 +13,7 @@ import open3d as o3d
 
 # Import dataset_binarize package to set up sys.path for lidar2osm imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from lidar2osm.utils.file_io import read_bin_file
+from ce_net.utils.file_io import read_bin_file
 
 # Import semantic labels for color mapping
 from create_seq_gt_map_npy import semantic_labels
@@ -78,17 +78,13 @@ def visualize_bin_labels(root_path, scan_idx=0):
         print(f"ERROR: No .bin files found in {bin_data_dir}")
         return
     
-    if scan_idx >= len(bin_files):
-        print(f"WARNING: scan_idx {scan_idx} >= number of scans {len(bin_files)}, using last scan")
-        scan_idx = len(bin_files) - 1
-    
     # Get the selected bin file
     bin_file = bin_files[scan_idx]
     bin_path = os.path.join(bin_data_dir, bin_file)
     
     # Get corresponding label file
     label_filename = f"{scan_idx:010d}.bin"
-    label_path = os.path.join(labels_dir, label_filename)
+    label_path = os.path.join(labels_dir, bin_file)
     
     print(f"\n{'='*80}")
     print(f"Visualizing semantic labels on bin scan")
