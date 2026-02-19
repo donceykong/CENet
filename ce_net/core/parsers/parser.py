@@ -1,3 +1,4 @@
+import os
 import random
 
 import numpy as np
@@ -57,7 +58,7 @@ class Parser:
         self.mcd_seq = None
         if dataset_name == "MCD" and not (
             isinstance(train_sequences, (list, tuple)) and len(train_sequences) == 2
-        ):
+        ) and (isinstance(train_sequences, list) and len(train_sequences) > 0 or not isinstance(train_sequences, list)):
             self.mcd_seq = train_sequences[0] if isinstance(train_sequences, list) else train_sequences
         self.labels = labels
         self.color_map = color_map
@@ -256,17 +257,43 @@ class Parser:
                     )
 
             elif self.dataset_name == "MCD":
-                self.test_dataset = MCD(
-                    root=self.root,
-                    seq=self.seq,
-                    labels=self.labels,
-                    color_map=self.color_map,
-                    learning_map=self.learning_map,
-                    learning_map_inv=self.learning_map_inv,
-                    sensor=self.sensor,
-                    max_points=max_points,
-                    gt=False,
-                )
+                if self.test_sequences and isinstance(self.test_sequences, (list, tuple)) and isinstance(self.test_sequences[0], str):
+                    # Infer on all scans in each sequence (no split)
+                    scan_files = []
+                    for seq in self.test_sequences:
+                        scan_path = os.path.join(self.root, seq, "lidar_bin", "data")
+                        if not os.path.isdir(scan_path):
+                            continue
+                        for f in sorted(os.listdir(scan_path)):
+                            if f.endswith(".bin"):
+                                scan_files.append(os.path.join(scan_path, f))
+                    # Dummy label paths (unused when gt=False)
+                    label_files = list(scan_files)
+                    self.test_dataset = MCD(
+                        root=self.root,
+                        labels=self.labels,
+                        color_map=self.color_map,
+                        learning_map=self.learning_map,
+                        learning_map_inv=self.learning_map_inv,
+                        sensor=self.sensor,
+                        max_points=max_points,
+                        scan_files=scan_files,
+                        label_files=label_files,
+                        gt=False,
+                    )
+                else:
+                    seq = self.seq or (self.test_sequences[0] if self.test_sequences else None)
+                    self.test_dataset = MCD(
+                        root=self.root,
+                        seq=seq,
+                        labels=self.labels,
+                        color_map=self.color_map,
+                        learning_map=self.learning_map,
+                        learning_map_inv=self.learning_map_inv,
+                        sensor=self.sensor,
+                        max_points=max_points,
+                        gt=False,
+                    )
 
             self.testloader = torch.utils.data.DataLoader(
                 self.test_dataset,
