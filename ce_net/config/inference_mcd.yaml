@@ -1,0 +1,29 @@
+# TODO: Use dataset_name to determine paths of other fields
+dataset_path: /media/donceykong/doncey_ssd_02/datasets/MCD
+dataset_name: MCD  # "KITTI-360" or "CU-MULTI" or "MCD"
+infer_or_train: infer   # "train" or "infer"
+data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/data_cfg_mcd.yaml
+relative_infer_dir: "inferred_labels/cenet_mcd"
+
+inference:
+  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_style/cenet_mcd-512
+  split: test # "valid", "train", or "test"
+
+training:
+  model_name: cenet_mcd-512
+  use_progressive_growing: True
+
+  model_configs:
+    cenet_mcd-512:
+      arch_config: ./config/arch/train/cenet_mcd-512.yaml
+      model_name: cenet_mcd-512
+
+    cenet_mcd-1024:
+      arch_config: ./config/arch/train/cenet_mcd-1024p.yaml
+      model_name: cenet_mcd-1024
+      pretrained_model_path: ./models/mcd_style/cenet_mcd-512
+
+    cenet_mcd-2048:
+      arch_config: ./config/arch/train/cenet_mcd-2048p.yaml
+      model_name: cenet_mcd-2048
+      pretrained_model_path: ./models/mcd_style/cenet_mcd-1024
