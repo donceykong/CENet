@@ -11,9 +11,9 @@ except ImportError:
 import numpy as np
 
 # Internal 
-from lidar2osm.core.parsers.cumulti import CU_MULTI
-from lidar2osm.core.parsers.kitti360 import KITTI_360
-from lidar2osm.core.parsers.mcd import MCD
+from ce_net.core.parsers.cumulti import CU_MULTI
+from ce_net.core.parsers.kitti360 import KITTI_360
+from ce_net.core.parsers.mcd import MCD
 
 class Parser:
     # standard conv, BN, relu
@@ -54,6 +54,11 @@ class Parser:
         self.train_sequences = train_sequences
         self.valid_sequences = valid_sequences
         self.test_sequences = test_sequences
+        self.mcd_seq = None
+        if dataset_name == "MCD" and not (
+            isinstance(train_sequences, (list, tuple)) and len(train_sequences) == 2
+        ):
+            self.mcd_seq = train_sequences[0] if isinstance(train_sequences, list) else train_sequences
         self.labels = labels
         self.color_map = color_map
         self.learning_map = learning_map
@@ -100,17 +105,34 @@ class Parser:
                     gt=self.gt,
                 )
             elif dataset_name == "MCD":
-                self.train_dataset = MCD(
-                    root=self.root,
-                    seq=self.mcd_seq,
-                    labels=self.labels,
-                    color_map=self.color_map,
-                    learning_map=self.learning_map,
-                    learning_map_inv=self.learning_map_inv,
-                    sensor=self.sensor,
-                    max_points=max_points,
-                    gt=self.gt,
-                )
+                if isinstance(self.train_sequences, (list, tuple)) and len(self.train_sequences) == 2:
+                    scan_files, label_files = self.train_sequences
+                    self.train_dataset = MCD(
+                        root=self.root,
+                        labels=self.labels,
+                        color_map=self.color_map,
+                        learning_map=self.learning_map,
+                        learning_map_inv=self.learning_map_inv,
+                        sensor=self.sensor,
+                        max_points=max_points,
+                        scan_files=scan_files,
+                        label_files=label_files,
+                        gt=self.gt,
+                        transform=True,
+                    )
+                else:
+                    self.train_dataset = MCD(
+                        root=self.root,
+                        seq=self.mcd_seq,
+                        labels=self.labels,
+                        color_map=self.color_map,
+                        learning_map=self.learning_map,
+                        learning_map_inv=self.learning_map_inv,
+                        sensor=self.sensor,
+                        max_points=max_points,
+                        gt=self.gt,
+                        transform=True,
+                    )
             #     np.random.seed(0)
             #     dataset_size = len(self.train_dataset)
             #     indices = list(range(dataset_size))
@@ -144,7 +166,11 @@ class Parser:
             assert len(self.trainloader) > 0
             self.trainiter = iter(self.trainloader)
 
-        if TRAIN and self.val_robots is not None:
+        if TRAIN and (
+            (self.dataset_name == "CU-MULTI" and self.val_robots is not None)
+            or (self.dataset_name == "KITTI-360" and self.valid_sequences is not None)
+            or (self.dataset_name == "MCD" and self.valid_sequences is not None)
+        ):
             if self.dataset_name == "CU-MULTI":
                 self.valid_dataset = CU_MULTI(
                     root=self.root,
@@ -171,7 +197,35 @@ class Parser:
                     max_points=max_points,
                     gt=self.gt,
                 )
-            
+            elif self.dataset_name == "MCD" and self.valid_sequences is not None:
+                if isinstance(self.valid_sequences, (list, tuple)) and len(self.valid_sequences) == 2:
+                    scan_files, label_files = self.valid_sequences
+                    self.valid_dataset = MCD(
+                        root=self.root,
+                        labels=self.labels,
+                        color_map=self.color_map,
+                        learning_map=self.learning_map,
+                        learning_map_inv=self.learning_map_inv,
+                        sensor=self.sensor,
+                        max_points=max_points,
+                        scan_files=scan_files,
+                        label_files=label_files,
+                        gt=self.gt,
+                    )
+                else:
+                    seq = self.valid_sequences[0] if isinstance(self.valid_sequences, list) else self.valid_sequences
+                    self.valid_dataset = MCD(
+                        root=self.root,
+                        seq=seq,
+                        labels=self.labels,
+                        color_map=self.color_map,
+                        learning_map=self.learning_map,
+                        learning_map_inv=self.learning_map_inv,
+                        sensor=self.sensor,
+                        max_points=max_points,
+                        gt=self.gt,
+                    )
+
             self.validloader = torch.utils.data.DataLoader(
                 self.valid_dataset,
                 batch_size=self.batch_size,

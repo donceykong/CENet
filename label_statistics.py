@@ -12,7 +12,7 @@ import numpy as np
 from collections import defaultdict
 from tqdm import tqdm
 
-# Import dataset_binarize package to set up sys.path for lidar2osm imports
+# Import dataset_binarize package to set up sys.path for ce_net imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ce_net.utils.file_io import read_bin_file
 

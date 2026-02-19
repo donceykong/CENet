@@ -11,8 +11,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # Internal
-from lidar2osm.models.postproc.KNN import KNN
-from lidar2osm.core.parsers.parser import Parser
+from ce_net.models.postproc.KNN import KNN
+from ce_net.core.parsers.parser import Parser
 
 
 class User:
@@ -81,14 +81,14 @@ class User:
         with torch.no_grad():
             torch.nn.Module.dump_patches = True
             if self.ARCH["train"]["pipeline"] == "hardnet":
-                from lidar2osm.models.network.HarDNet import HarDNet
+                from ce_net.models.network.HarDNet import HarDNet
 
                 self.model = HarDNet(
                     self.parser.get_n_classes(), self.ARCH["train"]["aux_loss"]
                 )
 
             if self.ARCH["train"]["pipeline"] == "res":
-                from lidar2osm.models.network.ResNet import ResNet_34
+                from ce_net.models.network.ResNet import ResNet_34
 
                 self.model = ResNet_34(
                     self.parser.get_n_classes(), self.ARCH["train"]["aux_loss"]
@@ -107,7 +107,7 @@ class User:
                     convert_relu_to_softplus(self.model, nn.SiLU())
 
             if self.ARCH["train"]["pipeline"] == "fid":
-                from lidar2osm.models.network.Fid import ResNet_34
+                from ce_net.models.network.Fid import ResNet_34
 
                 self.model = ResNet_34(
                     self.parser.get_n_classes(), self.ARCH["train"]["aux_loss"]

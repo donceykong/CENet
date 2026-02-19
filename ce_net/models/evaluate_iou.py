@@ -10,7 +10,7 @@ import torch
 
 # Internal
 from models.ioueval import iouEval
-from lidar2osm.core.pointcloud.laserscan import SemLaserScan
+from ce_net.core.pointcloud.laserscan import SemLaserScan
 
 # possible splits
 splits = ['train','valid','test']

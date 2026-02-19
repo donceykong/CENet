@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from collections import namedtuple
 
-# Import dataset_binarize package to set up sys.path for lidar2osm imports
+# Import dataset_binarize package to set up sys.path for ce_net imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Body to LiDAR transformation matrix

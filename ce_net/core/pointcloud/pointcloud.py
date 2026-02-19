@@ -4,11 +4,11 @@
 import numpy as np
 import open3d as o3d
 
-# Internal
-from lidar2osm.core.projection import (
-    convert_pointcloud_to_latlon,
-    post_process_points,
-)
+# # Internal
+# from ce_net.core.projection import (
+#     convert_pointcloud_to_latlon,
+#     post_process_points,
+# )
 
 # def labels2RGB(label_ids, labels_dict):
 #     """

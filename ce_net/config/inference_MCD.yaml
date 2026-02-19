@@ -2,8 +2,7 @@
 dataset_path: /media/donceykong/doncey_ssd_02/datasets/MCD
 dataset_name: MCD  # "KITTI-360" or "CU-MULTI" or "MCD"
 infer_or_train: infer   # "train" or "infer"
-# data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/Lidar2OSM_FULL/Lidar2OSM/lidar2osm/config/labels/semantic-kitti_MCD.yaml
-data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/Lidar2OSM_FULL/Lidar2OSM/lidar2osm/config/labels/semantic-kitti.yaml
+data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/data_cfg_mcd.yaml
 
 inference:
   # model_path: /media/donceykong/donceys_data_ssd/models/CENet/cumulti_osm/cenet_osm-512

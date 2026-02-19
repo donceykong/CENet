@@ -19,10 +19,10 @@ from tqdm import tqdm
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Internal imports
-from lidar2osm.datasets.cu_multi_dataset import labels as sem_kitti_labels
-from lidar2osm.core.pointcloud import labels2RGB
-from lidar2osm.utils.file_io import read_bin_file
-from lidar2osm.core.projection import *
+from ce_net.datasets.cu_multi_dataset import labels as sem_kitti_labels
+from ce_net.core.pointcloud import labels2RGB
+from ce_net.utils.file_io import read_bin_file
+from ce_net.core.projection import *
 
 
 class SemanticPointCloudVisualizer:
