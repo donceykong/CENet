@@ -11,7 +11,7 @@ import sys
 import numpy as np
 import open3d as o3d
 
-# Import dataset_binarize package to set up sys.path for lidar2osm imports
+# Import dataset_binarize package to set up sys.path for ce_net imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ce_net.utils.file_io import read_bin_file
 
@@ -60,8 +60,9 @@ def visualize_bin_labels(root_path, scan_idx=0):
     
     # Paths
     bin_data_dir = os.path.join(root_path, "lidar_bin", "data")
-    labels_dir = os.path.join(root_path, "gt_labels")
-    
+    labels_dir = os.path.join(root_path, "inferred_labels", "cenet_mcd")
+    # labels_dir = os.path.join(root_path, "gt_labels")
+
     # Check if directories exist
     if not os.path.exists(bin_data_dir):
         print(f"ERROR: Bin data directory not found: {bin_data_dir}")
@@ -177,7 +178,7 @@ if __name__ == '__main__':
     #   - root_path/lidar_bin/data/*.bin (bin scan files)
     #   - root_path/gt_labels/<scan_idx:010d>.bin (semantic label files)
     
-    root_path = "/media/donceykong/doncey_ssd_02/datasets/MCD/kth_day_06"
+    root_path = "/media/donceykong/doncey_ssd_02/datasets/MCD/kth_day_09"
     scan_idx = 10  # Index of the scan to visualize (0 = first scan)
     
     visualize_bin_labels(root_path, scan_idx=scan_idx)

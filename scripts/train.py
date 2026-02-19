@@ -11,8 +11,8 @@ import sys
 
 # Internal
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from lidar2osm.models.trainer_wb import Trainer
-from lidar2osm import CONFIG_DIR
+from ce_net.models.trainer_wb import Trainer
+from ce_net import CONFIG_DIR
 
 
 def load_yaml(config_path):

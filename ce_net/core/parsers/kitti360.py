@@ -13,7 +13,7 @@ except ImportError:
 import numpy as np
 
 # Internal 
-from lidar2osm.core.pointcloud.laserscan import LaserScan, SemLaserScan
+from ce_net.core.pointcloud.laserscan import LaserScan, SemLaserScan
 
 
 EXTENSIONS_SCAN = [".bin"]

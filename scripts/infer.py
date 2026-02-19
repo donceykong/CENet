@@ -12,8 +12,8 @@ import sys
 
 # Internal modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from lidar2osm.models.user import User
-from lidar2osm import CONFIG_DIR
+from ce_net.models.user import User
+from ce_net import CONFIG_DIR
 
 def load_yaml(config_path):
     with open(config_path, "r") as file:
@@ -22,7 +22,7 @@ def load_yaml(config_path):
 
 if __name__ == "__main__":
     # Default configuration path
-    config = load_yaml(CONFIG_DIR / "inference_MCD.yaml")
+    config = load_yaml(CONFIG_DIR / "inference_mcd.yaml")
 
     # Setup command line arguments
     splits = ["train", "valid", "test"]
@@ -102,6 +102,12 @@ if __name__ == "__main__":
         print("Error opening data yaml file.")
         quit()
 
+    # MCD: use relative_infer_dir from inference config (e.g. "inferred_labels/cenet_mcd")
+    if FLAGS.dataset_name == "MCD":
+        relative_infer_dir = config.get("relative_infer_dir", "inferred_labels/cenet_mcd")
+        DATA["relative_infer_dir"] = relative_infer_dir
+        DATA.setdefault("sequences", [DATA.get("seq")] if DATA.get("seq") else [])
+
     # create log folder for each sequence
     try:
         if FLAGS.dataset_name == "CU-MULTI":
@@ -123,12 +129,18 @@ if __name__ == "__main__":
                 if not os.path.isdir(inference_dir):
                     os.makedirs(inference_dir)
         elif FLAGS.dataset_name == "MCD":
-            seq = DATA["seq"]
-            env_dir = os.path.join(FLAGS.dataset_path, f"{seq}")
-            inference_dir = os.path.join(env_dir, "inferred_labels_SKITTI_CENET")
-            print(f"inference_dir: {inference_dir}")
-            if not os.path.isdir(inference_dir):
-                os.makedirs(inference_dir)
+            relative_infer_dir = DATA.get("relative_infer_dir", "inferred_labels/cenet_mcd")
+            for seq in DATA["sequences"]:
+                inference_dir = os.path.join(FLAGS.dataset_path, seq, relative_infer_dir)
+                conf_dir = os.path.join(inference_dir, "confidence_scores")
+                multiclass_conf_dir = os.path.join(inference_dir, "multiclass_confidence_scores")
+                print(f"inference_dir: {inference_dir}")
+                if not os.path.isdir(inference_dir):
+                    os.makedirs(inference_dir)
+                if not os.path.isdir(conf_dir):
+                    os.makedirs(conf_dir)
+                if not os.path.isdir(multiclass_conf_dir):
+                    os.makedirs(multiclass_conf_dir)
     except Exception as e:
         print(e)
         print("Error creating log directory. Check permissions!")

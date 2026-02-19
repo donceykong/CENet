@@ -13,11 +13,79 @@ except ImportError:
 import numpy as np
 
 # Internal 
-from lidar2osm.core.pointcloud.laserscan import LaserScan, SemLaserScan
+from ce_net.core.pointcloud.laserscan import LaserScan, SemLaserScan
 
 
 EXTENSIONS_SCAN = [".bin"]
 EXTENSIONS_LABEL = [".bin"]
+
+
+def get_mcd_split_from_sequences_and_ratios(root, sequences, split_ratios, seed=1024):
+    """
+    Collect all scan/label file pairs from the given sequences under root,
+    shuffle with seed, and split into train/valid/test by split_ratios.
+
+    Args:
+        root: dataset root (e.g. /path/to/MCD)
+        sequences: list of sequence names (e.g. ["kth_day_06", "kth_day_10"])
+        split_ratios: [train_ratio, valid_ratio, test_ratio], e.g. [0.8, 0.1, 0.1]
+
+    Returns:
+        dict with keys "train", "valid", "test". Each value is
+        (list of scan paths, list of label paths).
+    """
+    train_r, valid_r, test_r = split_ratios
+    scan_files = []
+    label_files = []
+    for seq in sequences:
+        scan_path = os.path.join(root, seq, "lidar_bin", "data")
+        label_path = os.path.join(root, seq, "gt_labels")
+        if not os.path.isdir(label_path) or not os.path.isdir(scan_path):
+            continue
+        label_list = [
+            os.path.join(label_path, f)
+            for f in os.listdir(label_path)
+            if is_label(f)
+        ]
+        label_bases = {os.path.splitext(os.path.basename(f))[0] for f in label_list}
+        for f in os.listdir(scan_path):
+            if not is_scan(f):
+                continue
+            base = os.path.splitext(f)[0]
+            if base not in label_bases:
+                continue
+            scan_files.append(os.path.join(scan_path, f))
+            label_files.append(os.path.join(label_path, f))
+    # sort so scan/label stay aligned
+    pairs = list(zip(scan_files, label_files))
+    pairs.sort(key=lambda x: x[0])
+    scan_files = [p[0] for p in pairs]
+    label_files = [p[1] for p in pairs]
+    n = len(scan_files)
+    if n == 0:
+        return {"train": ([], []), "valid": ([], []), "test": ([], [])}
+    indices = list(range(n))
+    random.seed(seed)
+    random.shuffle(indices)
+    n_train = int(round(n * train_r))
+    n_valid = int(round(n * valid_r))
+    n_test = n - n_train - n_valid
+    if n_test < 0:
+        n_test = 0
+        n_valid = n - n_train
+    i0, i1 = 0, n_train
+    i2 = n_train + n_valid
+    train_scans = [scan_files[i] for i in indices[i0:i1]]
+    train_labels = [label_files[i] for i in indices[i0:i1]]
+    valid_scans = [scan_files[i] for i in indices[i1:i2]]
+    valid_labels = [label_files[i] for i in indices[i1:i2]]
+    test_scans = [scan_files[i] for i in indices[i2:]]
+    test_labels = [label_files[i] for i in indices[i2:]]
+    return {
+        "train": (train_scans, train_labels),
+        "valid": (valid_scans, valid_labels),
+        "test": (test_scans, test_labels),
+    }
 
 
 def is_scan(filename):
@@ -38,7 +106,9 @@ class MCD(Dataset):
         learning_map_inv,   # inverse of previous (recover labels)
         sensor,             # sensor to parse scans from
         max_points=150000,  # max number of points present in dataset
-        seq=None,           # sequence
+        seq=None,           # single sequence name (used if scan_files/label_files not provided)
+        scan_files=None,    # optional: list of scan paths (overrides seq)
+        label_files=None,   # optional: list of label paths, same length as scan_files
         gt=True,
         transform=False,
     ):  # send ground truth?
@@ -64,13 +134,7 @@ class MCD(Dataset):
         self.nclasses = len(self.learning_map_inv)
 
         # sanity checks
-        print(f"\nsequences: {seq}")
-
-        # make sure directory exists
-        if os.path.isdir(self.root):
-            print("Sequences folder exists! Using sequences from %s" % self.root)
-        else:
-            raise ValueError("Sequences folder doesn't exist! Exiting...")
+        print(f"\nMCD: seq={seq}, scan_files provided={scan_files is not None}")
 
         # make sure labels is a dict
         print("\nAsserting labels")
@@ -88,61 +152,54 @@ class MCD(Dataset):
         self.scan_files = []
         self.label_files = []
 
-        # fill in with names, checking that all sequences are complete
-        print(f"\n\nparsing seq {self.seq}\n\n")
-
-        scan_path = os.path.join(self.root, self.seq, "lidar_bin/data")
-        print(f"scan_path: {scan_path}")
-        label_path = os.path.join(self.root, self.seq, "gt_labels")
-        print(f"label_path: {label_path}")
-            
-        # # Add sudo .bin labels to the label_path for every scan in the scan_path
-        # for scan in os.listdir(scan_path):
-        #     label_bin_path = os.path.join(label_path, os.path.basename(scan).replace(".bin", ".bin"))
-        #     # print(f"label_bin_path: {label_bin_path}")
-        #     # Create label_bin_path file with no content
-        #     with open(label_bin_path, 'w') as f:
-        #         pass
-        #     # print(f"scan: {scan}")
-
-        label_files = [
-            os.path.join(dp, f)
-            for dp, dn, fn in os.walk(os.path.expanduser(label_path))
-            for f in fn
-            if is_label(f)
-        ]
-        print(f"found {len(label_files)} label files")
-
-        label_bases = set(
-            os.path.splitext(os.path.basename(f))[0] for f in label_files
-        )
-
-        # for label_base in label_bases:
-        #     print(label_base)
-
-        # Filter scan files to include only those with a corresponding label file
-        scan_files = [
-            os.path.join(dp, f)
-            for dp, dn, fn in os.walk(os.path.expanduser(scan_path))
-            for f in fn
-            if is_scan(f)
-            and os.path.splitext(os.path.basename(f))[0] in label_bases
-        ]
-        print(f"found {len(scan_files)} scan files")
-
-        # # check all scans have labels
-        if self.gt:
+        if scan_files is not None and label_files is not None:
+            # use provided file lists (e.g. from ratio split)
             assert len(scan_files) == len(label_files)
+            self.scan_files = list(scan_files)
+            self.label_files = list(label_files)
+            print(f"Using {len(self.scan_files)} scans from file list")
+        else:
+            # discover from single sequence
+            if not os.path.isdir(self.root):
+                raise ValueError("Sequences folder doesn't exist! Exiting...")
+            if seq is None:
+                raise ValueError("MCD requires either (scan_files, label_files) or seq")
+            print(f"\n\nparsing seq {self.seq}\n\n")
 
-        # extend list
-        self.scan_files.extend(scan_files)
-        self.label_files.extend(label_files)
+            scan_path = os.path.join(self.root, self.seq, "lidar_bin/data")
+            print(f"scan_path: {scan_path}")
+            label_path = os.path.join(self.root, self.seq, "gt_labels")
+            print(f"label_path: {label_path}")
 
-        # sort for correspondance
-        self.scan_files.sort()
-        self.label_files.sort()
+            label_files = [
+                os.path.join(dp, f)
+                for dp, dn, fn in os.walk(os.path.expanduser(label_path))
+                for f in fn
+                if is_label(f)
+            ]
+            print(f"found {len(label_files)} label files")
 
-        print(f"Using {len(self.scan_files)} scans from seq {self.seq}")
+            label_bases = set(
+                os.path.splitext(os.path.basename(f))[0] for f in label_files
+            )
+
+            scan_files = [
+                os.path.join(dp, f)
+                for dp, dn, fn in os.walk(os.path.expanduser(scan_path))
+                for f in fn
+                if is_scan(f)
+                and os.path.splitext(os.path.basename(f))[0] in label_bases
+            ]
+            print(f"found {len(scan_files)} scan files")
+
+            if self.gt:
+                assert len(scan_files) == len(label_files)
+
+            self.scan_files.extend(scan_files)
+            self.label_files.extend(label_files)
+            self.scan_files.sort()
+            self.label_files.sort()
+            print(f"Using {len(self.scan_files)} scans from seq {self.seq}")
 
     def __getitem__(self, index):
         # get item in tensor shape

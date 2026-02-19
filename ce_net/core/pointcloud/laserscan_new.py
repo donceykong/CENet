@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 import open3d as o3d
 
 # Internal Imports
-from Lidar2OSM.lidar2osm.core.pointcloud.pointcloud import labels2RGB, get_transformed_point_cloud
-from datasets.cu_multi_dataset import labels
-from lidar2osm.utils.file_io import read_bin_file
+from ce_net.core.pointcloud.pointcloud import labels2RGB, get_transformed_point_cloud
+from ce_net.datasets.cu_multi_dataset import labels
+from ce_net.utils.file_io import read_bin_file
 
 def scale_to_255(a, min, max, dtype=np.float32):
     """Scales an array of values from specified min, max range to 0-255
@@ -661,7 +661,6 @@ if __name__ == "__main__":
     sequence_dir = "2013_05_28_drive_0000_sync"
     label_dir = f"/media/donceykong/doncey_ssd_01/datasets/KITTI-360-OSM/data_3d_semantics/{sequence_dir}/osm_labels"
     # label_dir = f"/media/donceykong/doncey_ssd_01/kitti360_logs/sequences/{sequence_dir}/predictions"
-    # label_dir = "/home/donceykong/Desktop/ARPG/projects/summer_2024/Lidar2OSM_FULL/CENet-OSM/kitti360_logs/sequences/2013_05_28_drive_0002_sync/predictions/"
     labels_dict = {label.id: label.color for label in labels}
     
     velodyne_poses_file = os.path.join("/media/donceykong/doncey_ssd_01/datasets/KITTI-360-OSM/data_poses", sequence_dir, "velodyne_poses.txt")

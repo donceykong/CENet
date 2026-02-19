@@ -15,14 +15,14 @@ from tqdm import tqdm
 import wandb
 
 # Internal
-from lidar2osm.utils.avgmeter import *
-from lidar2osm.models.sync_batchnorm.batchnorm import convert_model
-from lidar2osm.models.ioueval import *
+from ce_net.utils.avgmeter import *
+from ce_net.models.sync_batchnorm.batchnorm import convert_model
+from ce_net.models.ioueval import *
 
 # Loss function(s)
-from lidar2osm.models.losses.Lovasz_Softmax import Lovasz_softmax
-from lidar2osm.models.scheduler.cosine import CosineAnnealingWarmUpRestarts
-from lidar2osm.models.scheduler.warmupLR import *
+from ce_net.models.losses.Lovasz_Softmax import Lovasz_softmax
+from ce_net.models.scheduler.cosine import CosineAnnealingWarmUpRestarts
+from ce_net.models.scheduler.warmupLR import *
 
 
 def save_to_log(logdir, logfile, message):
@@ -65,14 +65,25 @@ class Trainer:
         }
 
         # get the data
-        from lidar2osm.core.parsers.parser import Parser
+        from ce_net.core.parsers.parser import Parser
+        from ce_net.core.parsers.mcd import get_mcd_split_from_sequences_and_ratios
+
+        # Normalize MCD config: if sequences + ratio split, build train/valid/test file lists
+        if dataset_name == "MCD" and "sequences" in self.DATA and isinstance(self.DATA.get("split"), list):
+            self.DATA["split"] = get_mcd_split_from_sequences_and_ratios(
+                self.datadir, self.DATA["sequences"], self.DATA["split"], seed=1024
+            )
+            n_train = len(self.DATA["split"]["train"][0])
+            n_valid = len(self.DATA["split"]["valid"][0])
+            n_test = len(self.DATA["split"]["test"][0])
+            print(f"MCD split: train={n_train}, valid={n_valid}, test={n_test}")
 
         self.parser = Parser(
             root=self.datadir,
             dataset_name = dataset_name,
             train_sequences=self.DATA["split"]["train"],  # self.DATA["split"]["valid"] + self.DATA["split"]["train"] if finetune with valid
             valid_sequences=self.DATA["split"]["valid"],
-            test_sequences=None,
+            test_sequences=(self.DATA["split"].get("test") if isinstance(self.DATA["split"], type({})) else None),
             labels=self.DATA["labels"],
             color_map=self.DATA["color_map"],
             learning_map=self.DATA["learning_map"],
@@ -81,12 +92,13 @@ class Trainer:
             max_points=self.ARCH["dataset"]["max_points"],
             batch_size=self.ARCH["train"]["batch_size"],
             workers=self.ARCH["train"]["workers"],
-            environment = self.DATA["environment"],
-            train_robots = self.DATA["train_robots"],
-            val_robots = self.DATA["val_robots"],
-            test_robots = self.DATA["test_robots"],
+            environment = self.DATA.get("environment"),
+            train_robots = self.DATA.get("train_robots"),
+            val_robots = self.DATA.get("val_robots"),
+            test_robots = self.DATA.get("test_robots"),
             gt=True,
             shuffle_train=True,
+            TRAIN=True,
         )
 
         # weights for loss (and bias)
@@ -109,7 +121,7 @@ class Trainer:
         with torch.no_grad():
             # HARDNET PIPELINE
             if self.ARCH["train"]["pipeline"] == "hardnet":
-                from lidar2osm.models.network.HarDNet import HarDNet
+                from ce_net.models.network.HarDNet import HarDNet
 
                 self.model = HarDNet(
                     self.parser.get_n_classes(), self.ARCH["train"]["aux_loss"]
@@ -117,7 +129,7 @@ class Trainer:
             
             # RESNET PIPELINE
             if self.ARCH["train"]["pipeline"] == "res":
-                from lidar2osm.models.network.ResNet import ResNet_34
+                from ce_net.models.network.ResNet import ResNet_34
 
                 self.model = ResNet_34(
                     self.parser.get_n_classes(), self.ARCH["train"]["aux_loss"]
@@ -137,7 +149,7 @@ class Trainer:
 
             # FID PIPELINE
             if self.ARCH["train"]["pipeline"] == "fid":
-                from lidar2osm.models.network.Fid import ResNet_34
+                from ce_net.models.network.Fid import ResNet_34
 
                 self.model = ResNet_34(
                     self.parser.get_n_classes(), self.ARCH["train"]["aux_loss"]
@@ -209,7 +221,7 @@ class Trainer:
 
         self.criterion = nn.NLLLoss(weight=self.loss_w).to(self.device)
         self.ls = Lovasz_softmax(ignore=0).to(self.device)
-        from lidar2osm.models.losses.boundary_loss import BoundaryLoss
+        from ce_net.models.losses.boundary_loss import BoundaryLoss
 
         self.bd = BoundaryLoss().to(self.device)
         # loss as dataparallel too (more images in batch)

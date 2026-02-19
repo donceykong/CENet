@@ -6,13 +6,11 @@ import pandas as pd
 from scipy.spatial.transform import Rotation as R
 import open3d as o3d
 from tqdm import tqdm
-from pypcd import pypcd
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from collections import namedtuple
 
-# Import dataset_binarize package to set up sys.path for ce_net imports
+# Import dataset_binarize package to set up sys.path for lidar2osm imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from ce_net.utils.file_io import read_bin_file
 
 # Body to LiDAR transformation matrix
 BODY_TO_LIDAR_TF = np.array([
@@ -21,6 +19,24 @@ BODY_TO_LIDAR_TF = np.array([
     [-0.006634514801117132, 0.02800900135032654, -0.999585653686922, -0.01755515794222565],
     [0.0, 0.0, 0.0, 1.0]
 ])
+
+def read_bin_file(file_path, dtype, shape=None):
+    """
+    Reads a .bin file and reshapes the data according to the provided shape.
+
+    Args:
+        file_path (str): The path to the .bin file.
+        dtype (data-type): The data type of the file content (e.g., np.float32, np.int16).
+        shape (tuple, optional): The desired shape of the output array. If None, the data is returned as a 1D array.
+
+    Returns:
+        np.ndarray: The data read from the .bin file, reshaped according to the provided shape.
+    """
+    data = np.fromfile(file_path, dtype=dtype)
+    if shape:
+        return data.reshape(shape)
+    return data
+
 
 Label = namedtuple(
     "Label",
@@ -47,6 +63,8 @@ sem_kitti_labels = [
     Label("motorcyclist", 32, (90, 30, 150)),
     Label("road", 40, (128, 64, 128)),
     Label("parking", 44, (250, 170, 160)),
+    Label("OSM BUILDING", 45, (0, 0, 255)),   # OSM
+    Label("OSM ROAD", 46, (255, 0, 0)),       # OSM
     Label("sidewalk", 48, (244, 35, 232)),
     Label("other-ground", 49, (81, 0, 81)),
     Label("building", 50, (0, 100, 0)),
@@ -78,7 +96,7 @@ semantic_labels = [
     Label("hydrant", 8, (0, 0, 0)),  # Placeholder color, needs assignment
     Label("infosign", 9, (0, 0, 0)),  # Placeholder color, needs assignment
     Label("lanemarking", 10, _sem_kitti_color_map["lane-marking"]),  # Matches sem_kitti "lane-marking"
-    Label("noise", 11, (255, 0, 0)),  # Placeholder color, needs assignment
+    Label("noise", 11, (0, 0, 0)),  # Placeholder color, needs assignment
     Label("other", 12, _sem_kitti_color_map["other-object"]),  # Matches sem_kitti "other-object"
     Label("parkinglot", 13, _sem_kitti_color_map["parking"]),  # Matches sem_kitti "parking"
     Label("pedestrian", 14, _sem_kitti_color_map["person"]),  # Matches sem_kitti "person"
@@ -98,15 +116,12 @@ semantic_labels = [
     Label("vehicle-static", 28, _sem_kitti_color_map["car"]),  # Matches sem_kitti "car"
 ]
 
-# Create a dictionary mapping label ID to Label name for backward compatibility
-SEMANTIC_LABELS = {label.id: label.name for label in semantic_labels}
-
 def labels_to_colors(labels):
     """
-    Convert semantic label IDs to RGB colors.
+    Convert semantic label IDs to RGB colors using semantic_labels.
     
     Args:
-        labels: (N,) array of semantic label IDs (0-28)
+        labels: (N,) array of semantic label IDs
     
     Returns:
         colors: (N, 3) array of RGB colors in [0, 1] range
@@ -303,6 +318,38 @@ def load_poses(poses_file):
     return poses, index_to_timestamp
 
 
+def find_closest_pose(timestamp, poses_dict, exact_match_threshold=0.001):
+    """
+    Find the closest pose timestamp to the given timestamp.
+    
+    Args:
+        timestamp: Target timestamp
+        poses_dict: Dictionary mapping timestamp to pose
+        exact_match_threshold: Time difference threshold in seconds to consider an exact match (default: 0.001s = 1ms)
+    
+    Returns:
+        Tuple of (closest timestamp key, time_difference), or (None, None) if poses_dict is empty
+        Returns None for timestamp if no exact match found (time_diff > threshold)
+    """
+    if not poses_dict:
+        return None, None
+    
+    pose_timestamps = np.array(list(poses_dict.keys()))
+    time_diffs = np.abs(pose_timestamps - timestamp)
+    closest_idx = np.argmin(time_diffs)
+    closest_ts = pose_timestamps[closest_idx]
+    time_diff = time_diffs[closest_idx]
+    
+    # Check if it's an exact match
+    if time_diff > exact_match_threshold:
+        # Warn but return None to indicate no exact match
+        print(f"  WARNING: No exact pose match for timestamp {timestamp:.6f}. "
+              f"Closest pose at {closest_ts:.6f} (difference: {time_diff:.6f}s). Skipping scan.")
+        return None, time_diff
+    
+    return closest_ts, time_diff
+
+
 def transform_points_to_world(points_xyz, position, quaternion, body_to_lidar_tf=None):
     """
     Transform points from lidar frame to world frame using pose.
@@ -346,31 +393,46 @@ def transform_points_to_world(points_xyz, position, quaternion, body_to_lidar_tf
     return world_points_xyz
 
 
-def process_sequence(root_path, max_scans=None, downsample_factor=1, voxel_size=0.1):
+def plot_map(dataset_path, seq_name, max_scans=None, downsample_factor=1, voxel_size=0.1, max_distance=None):
     """
-    Load PCD files with semantics, transform using poses, and accumulate points.
+    Load lidar bin files with semantic labels, transform using poses, and visualize with Open3D.
     
     Args:
-        root_path: Path to root directory (should contain gt_lidar_labels/ with pose_inW.csv and inL_labelled/)
+        dataset_path: Path to dataset directory
+        seq_name: Name of the sequence
         max_scans: Maximum number of scans to process (None for all)
         downsample_factor: Process every Nth scan (1 = all scans)
         voxel_size: Voxel size in meters for downsampling (default: 0.1m, set to None to disable)
-    
-    Returns:
-        accumulated_points: (N, 3) numpy array of points in world coordinates
-        accumulated_labels: (N,) numpy array of semantic label IDs (int32)
+        max_distance: Maximum distance in meters from origin to keep points (None to keep all points)
     """
-    pcd_dir = os.path.join(root_path, "gt_lidar_labels", "inL_labelled")
-    poses_file = os.path.join(root_path, "gt_lidar_labels", "pose_inW.csv")
-    
+    root_path = os.path.join(dataset_path, seq_name)
+    data_dir = os.path.join(root_path, "lidar_bin/data")
+    timestamps_file = os.path.join(root_path, "lidar_bin/timestamps.txt")
+    poses_file = os.path.join(root_path, "pose_inW.csv")
+    labels_dir = os.path.join(root_path, "inferred_labels", "cenet_mcd")
+    # labels_dir = os.path.join(root_path, "gt_labels")
+
     # Check if files exist
-    if not os.path.exists(pcd_dir):
-        print(f"ERROR: PCD directory not found: {pcd_dir}")
+    if not os.path.exists(data_dir):
+        print(f"ERROR: Data directory not found: {data_dir}")
+        return
+    
+    if not os.path.exists(timestamps_file):
+        print(f"ERROR: Timestamps file not found: {timestamps_file}")
         return
     
     if not os.path.exists(poses_file):
         print(f"ERROR: Poses file not found: {poses_file}")
         return
+    
+    if not os.path.exists(labels_dir):
+        print(f"ERROR: Labels directory not found: {labels_dir}")
+        return
+    
+    # Load timestamps
+    print(f"\nLoading timestamps from {timestamps_file}")
+    timestamps = np.loadtxt(timestamps_file)
+    print(f"Loaded {len(timestamps)} timestamps")
     
     # Load poses
     poses_dict, index_to_timestamp = load_poses(poses_file)
@@ -381,27 +443,6 @@ def process_sequence(root_path, max_scans=None, downsample_factor=1, voxel_size=
     if not index_to_timestamp:
         print("ERROR: No index column found in poses CSV. Cannot validate index matching.")
         return
-    
-    # Get all PCD files (named like cloud_<index>.pcd)
-    all_pcd_files = sorted([f for f in os.listdir(pcd_dir) if f.endswith('.pcd') and f.startswith('cloud_')])
-    print(f"\nFound {len(all_pcd_files)} PCD files")
-    
-    # Extract indices from filenames (cloud_<index>.pcd)
-    pcd_indices = []
-    pcd_files_dict = {}
-    for pcd_file in all_pcd_files:
-        try:
-            # Extract index from filename: cloud_<index>.pcd
-            index_str = pcd_file.replace('cloud_', '').replace('.pcd', '')
-            index = int(index_str)
-            pcd_indices.append(index)
-            pcd_files_dict[index] = pcd_file
-        except ValueError:
-            tqdm.write(f"  WARNING: Could not parse index from filename: {pcd_file}")
-            continue
-    
-    pcd_indices = sorted(pcd_indices)
-    print(f"Found {len(pcd_indices)} valid PCD files with indices")
     
     # Process poses in order by their index (num value)
     sorted_pose_indices = sorted(index_to_timestamp.keys())
@@ -418,244 +459,165 @@ def process_sequence(root_path, max_scans=None, downsample_factor=1, voxel_size=
     
     print(f"Processing {len(sorted_pose_indices)} scans...")
     
-    # Accumulate all points and labels
+    if max_distance is not None:
+        print(f"Filtering points beyond {max_distance}m from each pose position")
+    
+    # Accumulate all points and colors
     all_world_points = []
-    all_labels = []
+    all_colors = []
     
     # Process poses with progress bar
     for pose_num in tqdm(sorted_pose_indices, desc="Processing scans", unit="scan"):
-        # Check if PCD file exists for this pose index
-        if pose_num not in pcd_files_dict:
-            tqdm.write(f"  WARNING: Pose index {pose_num} has no corresponding PCD file")
-            continue
-        
         # Get pose data
         pose_timestamp = index_to_timestamp[pose_num]
         pose_data = poses_dict[pose_timestamp]
         position = pose_data[1:4]  # [x, y, z]
         quaternion = pose_data[4:8]  # [qx, qy, qz, qw]
         
-        # Load PCD file using pypcd
-        pcd_file = pcd_files_dict[pose_num]
-        pcd_path = os.path.join(pcd_dir, pcd_file)
+        # Construct bin file name directly from pose_num (1-indexed)
+        # Bin files are named 0000000001.bin, 0000000002.bin, etc.
+        bin_file = f"{pose_num:010d}.bin"
+        bin_path = os.path.join(data_dir, bin_file)
+        
+        # Check if bin file exists
+        if not os.path.exists(bin_path):
+            tqdm.write(f"  WARNING: Bin file not found for pose {pose_num}: {bin_file}")
+            continue
+        
+        # Get corresponding timestamp (pose_num is 1-indexed, timestamps array is 0-indexed)
+        scan_timestamp = timestamps[pose_num - 1]
+        
+        # Validate timestamps match (within threshold)
+        time_diff = abs(scan_timestamp - pose_timestamp)
+        if time_diff > 0.1:  # 100ms threshold
+            raise ValueError(
+                f"Timestamp mismatch at timestamp index {pose_num - 1} (pose index {pose_num}): "
+                f"Scan timestamp is {scan_timestamp:.6f} but pose timestamp is {pose_timestamp:.6f} "
+                f"(difference: {time_diff:.6f}s)"
+            )
+        
+        # Load point cloud (bin_path already constructed above)
         try:
-            # Read PCD file using pypcd
-            pc = pypcd.PointCloud.from_path(pcd_path)
-            
-            # Extract points as numpy array
-            points_xyz = np.column_stack([pc.pc_data['x'], pc.pc_data['y'], pc.pc_data['z']]).astype(np.float32)
-            
-            if len(points_xyz) == 0:
-                tqdm.write(f"  WARNING: Empty point cloud in {pcd_file}")
-                continue
-            
-            # Check available fields in PCD
-            available_fields = pc.pc_data.dtype.names
-            if pose_num == sorted_pose_indices[0]:  # Print info for first file only
-                tqdm.write(f"  PCD fields: {available_fields}")
-            
-            # Try to extract labels/class information
-            labels = None
-            label_field_name = None
-            
-            # Check for common label field names
-            for field_name in ['label', 'class', 'semantic', 'labels', 'classes', 'semantic_id']:
-                if field_name in available_fields:
-                    labels = pc.pc_data[field_name].astype(np.int32)
-                    label_field_name = field_name
-                    if pose_num == sorted_pose_indices[0]:  # Print info for first file only
-                        unique_labels = np.unique(labels)
-                        tqdm.write(f"  Found label field '{field_name}' with {len(unique_labels)} unique labels: {unique_labels[:10]}")
-                    break
-            
-            # Extract labels if available
-            if labels is None:
-                # Try to extract labels from color fields if no label field exists
-                # This is a fallback - we prefer explicit label fields
-                if pose_num == sorted_pose_indices[0]:  # Print warning for first file only
-                    tqdm.write(f"  WARNING: No label field found in {pcd_file}, skipping scan")
-                continue
-            
-            # Ensure labels are int32
-            labels = labels.astype(np.int32)
+            points = read_bin_file(bin_path, dtype=np.float32, shape=(-1, 4))
+            points_xyz = points[:, :3]
         except Exception as e:
-            tqdm.write(f"  Error loading {pcd_file}: {e}")
-            import traceback
-            tqdm.write(traceback.format_exc())
+            tqdm.write(f"  Error loading {bin_file}: {e}")
+            continue
+        
+        # Load corresponding label file
+        label_file = bin_file  # Label file should have same name as bin file
+        label_path = os.path.join(labels_dir, label_file)
+        
+        if not os.path.exists(label_path):
+            tqdm.write(f"  WARNING: Label file not found: {label_file}, skipping scan")
+            continue
+        
+        try:
+            # Load labels (assuming int32 format)
+            labels = read_bin_file(label_path, dtype=np.int32, shape=(-1))
+            
+            # Validate that labels match points
+            if len(labels) != len(points_xyz):
+                tqdm.write(f"  WARNING: Label count ({len(labels)}) != point count ({len(points_xyz)}) for {bin_file}, skipping")
+                continue
+            
+            # Convert labels to colors
+            colors = labels_to_colors(labels)
+        except Exception as e:
+            tqdm.write(f"  Error loading labels from {label_file}: {e}")
             continue
         
         # Transform to world coordinates (apply body-to-lidar transformation)
         world_points = transform_points_to_world(points_xyz, position, quaternion, BODY_TO_LIDAR_TF)
         
+        # Filter points by distance from pose position if max_distance is specified
+        if max_distance is not None and max_distance > 0:
+            # Calculate distance from pose position for each point
+            distances = np.linalg.norm(world_points - position, axis=1)
+            # Keep points within max_distance
+            mask = distances <= max_distance
+            world_points = world_points[mask]
+            colors = colors[mask]
+            
+            if len(world_points) == 0:
+                tqdm.write(f"  WARNING: All points filtered out for {bin_file} (max_distance={max_distance}m)")
+                continue
+        
         # Voxel downsample this scan before accumulating
         if voxel_size is not None and voxel_size > 0:
-            # Downsample points and labels together by grouping into voxels
-            # Round points to voxel grid
-            voxel_coords = np.round(world_points / voxel_size).astype(np.int32)
+            scan_pcd = o3d.geometry.PointCloud()
+            scan_pcd.points = o3d.utility.Vector3dVector(world_points)
+            scan_pcd.colors = o3d.utility.Vector3dVector(colors)
+            scan_pcd = scan_pcd.voxel_down_sample(voxel_size=voxel_size)
             
-            # Group points by voxel and get mode label for each voxel
-            from collections import defaultdict
-            voxel_to_points = defaultdict(list)
-            voxel_to_labels = defaultdict(list)
-            
-            for i, voxel_coord in enumerate(voxel_coords):
-                voxel_key = tuple(voxel_coord)
-                voxel_to_points[voxel_key].append(world_points[i])
-                voxel_to_labels[voxel_key].append(labels[i])
-            
-            # Get unique voxel centers and their mode labels
-            unique_voxels = []
-            voxel_labels = []
-            for voxel_key in voxel_to_points.keys():
-                # Use voxel center as point location
-                voxel_center = np.array(voxel_key, dtype=np.float32) * voxel_size
-                unique_voxels.append(voxel_center)
-                
-                # Get mode (most common) label for this voxel
-                label_list = voxel_to_labels[voxel_key]
-                unique, counts = np.unique(label_list, return_counts=True)
-                mode_label = unique[np.argmax(counts)]
-                voxel_labels.append(mode_label)
-            
-            world_points = np.array(unique_voxels, dtype=np.float32)
-            labels = np.array(voxel_labels, dtype=np.int32)
+            # Extract downsampled points and colors
+            world_points = np.asarray(scan_pcd.points)
+            colors = np.asarray(scan_pcd.colors)
         
         all_world_points.append(world_points)
-        all_labels.append(labels)
+        all_colors.append(colors)
     
     if not all_world_points:
         print("ERROR: No points accumulated")
-        return None, None
+        return
     
-    # Concatenate all points and labels
+    # Concatenate all points and colors
     print(f"\nAccumulating {len(all_world_points)} scans...")
     accumulated_points = np.vstack(all_world_points)
-    accumulated_labels = np.concatenate(all_labels)
+    accumulated_colors = np.vstack(all_colors)
     
     print(f"Total points: {len(accumulated_points)}")
     
-    return accumulated_points, accumulated_labels
-
-
-def merge_sequences(dataset_path, seq_names, output_npy_path, max_scans=None, downsample_factor=1, voxel_size=0.1):
-    """
-    Process multiple sequences and merge them into a single numpy file with x, y, z, label.
+    # Create Open3D point cloud with semantic colors
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(accumulated_points)
+    pcd.colors = o3d.utility.Vector3dVector(accumulated_colors)
     
-    Args:
-        dataset_path: Path to dataset directory containing sequence folders
-        seq_names: List of sequence names to process
-        output_npy_path: Path to output .npy file (will be created) with shape (N, 4) where columns are [x, y, z, label]
-        max_scans: Maximum number of scans to process per sequence (None for all)
-        downsample_factor: Process every Nth scan (1 = all scans)
-        voxel_size: Voxel size in meters for downsampling (default: 0.1m, set to None to disable)
-    """
-    print(f"\n{'='*80}")
-    print(f"Merging {len(seq_names)} sequences into single numpy file")
-    print(f"{'='*80}")
-    print(f"Sequences: {seq_names}")
-    print(f"Output file: {output_npy_path}")
-    print(f"{'='*80}\n")
+    # Visualize
+    print("\nVisualizing point cloud...")
+    print("Controls:")
+    print("  - Mouse: Rotate view")
+    print("  - Shift + Mouse: Pan view")
+    print("  - Mouse wheel: Zoom")
+    print("  - Q or ESC: Quit")
     
-    all_merged_points = []
-    all_merged_labels = []
+    o3d.visualization.draw_geometries([pcd])
     
-    # Process each sequence
-    for seq_idx, seq_name in enumerate(seq_names):
-        print(f"\n{'='*80}")
-        print(f"Processing sequence {seq_idx + 1}/{len(seq_names)}: {seq_name}")
-        print(f"{'='*80}")
-        
-        root_path = os.path.join(dataset_path, seq_name)
-        
-        # Process this sequence
-        points, labels = process_sequence(
-            root_path,
-            max_scans=max_scans,
-            downsample_factor=downsample_factor,
-            voxel_size=voxel_size
-        )
-        
-        if points is not None and labels is not None:
-            all_merged_points.append(points)
-            all_merged_labels.append(labels)
-            print(f"  Added {len(points)} points from {seq_name}")
-        else:
-            print(f"  WARNING: No points from {seq_name}, skipping")
+    # Save to PLY file
+    # Extract sequence name from root_path (e.g., "kth_day_06" from "/path/to/MCD/kth_day_06")
+    ply_dir = os.path.join(root_path, "ply")
+    ply_filename = f"inferred_labels_{seq_name}.ply"
+    ply_path = os.path.join(ply_dir, ply_filename)
     
-    if not all_merged_points:
-        print("\nERROR: No points accumulated from any sequence!")
-        return
+    # Create ply directory if it doesn't exist
+    if not os.path.exists(ply_dir):
+        os.makedirs(ply_dir)
+        print(f"Created directory: {ply_dir}")
     
-    # Merge all sequences
-    print(f"\n{'='*80}")
-    print(f"Merging all sequences...")
-    print(f"{'='*80}")
-    merged_points = np.vstack(all_merged_points)
-    merged_labels = np.concatenate(all_merged_labels)
-    
-    print(f"Total merged points: {len(merged_points)}")
-    print(f"  X range: [{merged_points[:, 0].min():.2f}, {merged_points[:, 0].max():.2f}]")
-    print(f"  Y range: [{merged_points[:, 1].min():.2f}, {merged_points[:, 1].max():.2f}]")
-    print(f"  Z range: [{merged_points[:, 2].min():.2f}, {merged_points[:, 2].max():.2f}]")
-    
-    # Get label statistics
-    unique_labels, counts = np.unique(merged_labels, return_counts=True)
-    print(f"\nLabel statistics:")
-    label_names = {label.id: label.name for label in semantic_labels}
-    for label_id, count in zip(unique_labels, counts):
-        label_name = label_names.get(int(label_id), f"unknown({label_id})")
-        percentage = (count / len(merged_labels)) * 100.0
-        print(f"  Label {label_id:2d} ({label_name:20s}): {count:10d} points ({percentage:5.2f}%)")
-    
-    # Combine points and labels into single array: [x, y, z, label]
-    merged_data = np.hstack([merged_points, merged_labels.reshape(-1, 1)])
-    
-    # Create output directory if it doesn't exist
-    output_dir = os.path.dirname(output_npy_path)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"\nCreated directory: {output_dir}")
-    
-    # Save merged point cloud as numpy file
-    print(f"\nSaving merged point cloud to: {output_npy_path}")
-    print(f"  Shape: {merged_data.shape}, dtype: {merged_data.dtype}")
-    print(f"  Columns: [x, y, z, label]")
-    np.save(output_npy_path, merged_data)
-    print(f"Successfully saved {len(merged_points)} points to {output_npy_path}")
-    
-    print(f"\n{'='*80}")
-    print(f"DONE! Merged {len(seq_names)} sequences into single numpy file")
-    print(f"{'='*80}")
+    # Save point cloud
+    print(f"\nSaving point cloud to: {ply_path}")
+    o3d.io.write_point_cloud(ply_path, pcd)
+    print(f"Successfully saved {len(accumulated_points)} points to {ply_path}")
 
 
 if __name__ == '__main__':
-    # Configuration
+    # Update these paths to match your setup
     dataset_path = "/media/donceykong/doncey_ssd_02/datasets/MCD"
-    
-    # List of sequences to merge
-    seq_names = [
-        "kth_day_06",
-        "kth_day_09",
-        "kth_night_05",
-    ]
-    
-    # Output numpy file path
-    # Will be saved in dataset_path/ply/merged_gt_labels_<seq_names>.npy
-    seq_name_str = "_".join(seq_names)
-    output_npy_path = os.path.join(dataset_path, "ply", f"merged_gt_labels_{seq_name_str}.npy")
-    
-    # Processing parameters
-    max_scans = 10000  # Maximum number of scans per sequence (None for all)
-    downsample_factor = 1  # Process every Nth scan (1 = all scans)
-    voxel_size = 1.0  # Voxel size for downsampling (in meters)
-    
-    # Merge all sequences into single numpy file
-    merge_sequences(
-        dataset_path=dataset_path,
-        seq_names=seq_names,
-        output_npy_path=output_npy_path,
-        max_scans=max_scans,
-        downsample_factor=downsample_factor,
-        voxel_size=voxel_size
-    )
+    seq_names = ["kth_day_09"]
 
+    # Optional: limit number of scans for faster visualization
+    # max_scans = 100  # Set to None to process all scans
+    max_scans = 5000
+    
+    # Optional: downsample scans (process every Nth scan)
+    downsample_factor = 200  # Set to 1 to process all scans, 2 for every other scan, etc.
+    
+    # Voxel size for downsampling (in meters)
+    voxel_size = 2.0  # 1m voxels
+    
+    # Maximum distance from origin to keep points (in meters)
+    max_distance = 200.0  # e.g., 100.0 to keep points within 100m from origin
+
+    for seq_name in seq_names:
+        plot_map(dataset_path, seq_name, max_scans=max_scans, downsample_factor=downsample_factor, 
+                 voxel_size=voxel_size, max_distance=max_distance)
