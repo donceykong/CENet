@@ -184,5 +184,5 @@ learning_ignore: # Ignore classes
   28: False
 
 # For MCD Training
-sequences: ["kth_day_09"]
+sequences: ["kth_day_06", "kth_day_10", "kth_night_01", "kth_night_04"]
 split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
