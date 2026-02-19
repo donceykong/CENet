@@ -80,10 +80,25 @@ def map_class_indices_to_labels(class_indices, learning_map_inv):
     return lut[class_indices]
 
 
-def labels_to_colors(labels, label_id_to_color, confidences=None):
+def _apply_value_curve(t, value_floor=0.0, gamma=1.0):
+    """
+    Map values in [0, 1] to output brightness for better visibility.
+    value_floor: minimum output (e.g. 0.15 so low confidence isn't pure black).
+    gamma: < 1 brightens mid-tones, > 1 darkens them.
+    """
+    t = np.clip(np.asarray(t, dtype=np.float32), 0.0, 1.0)
+    if gamma != 1.0:
+        t = np.power(t, gamma)
+    if value_floor > 0:
+        t = value_floor + (1.0 - value_floor) * t
+    return t
+
+
+def labels_to_colors(labels, label_id_to_color, confidences=None, value_floor=0.15, gamma=1.0):
     """
     Convert semantic label IDs to RGB colors. If confidences is given, modulate brightness
-    (lower confidence = darker). Otherwise full brightness.
+    (lower confidence = darker). Normalizes confidence range per batch; optional floor/gamma
+    improve visibility (avoid pure black, better mid-tone contrast).
     """
     n = len(labels)
     colors = np.zeros((n, 3), dtype=np.float32)
@@ -96,26 +111,44 @@ def labels_to_colors(labels, label_id_to_color, confidences=None):
     rng = max_c - min_c
     if rng <= 0:
         rng = 1.0
+    t = (confidences - min_c) / rng
+    t = _apply_value_curve(t, value_floor=value_floor, gamma=gamma)
     for i, label_id in enumerate(labels):
         lid = int(label_id)
         if lid in label_id_to_color:
             base = np.array(label_id_to_color[lid], dtype=np.float32) / 255.0
-            colors[i] = base * (confidences[i] - min_c) / rng
+            colors[i] = base * t[i]
         else:
             colors[i] = [0.5, 0.5, 0.5]
     return colors
 
 
-def single_label_confidence_to_colors(confidences, label_id, label_id_to_color):
+def single_label_confidence_to_colors(confidences, label_id, label_id_to_color,
+                                      normalize_range=True, value_floor=0.12, gamma=0.65,
+                                      grayscale=False):
     """
-    Color by one label's confidence: full label color at 1, black at 0, linear fade in between.
+    Color by one label's confidence.
+    - grayscale=False: high = label color, low = dark (with value_floor).
+    - grayscale=True: high = white, low = black (use value_floor=0 for full range). Scene background gray is set in the viewer.
+    - normalize_range, value_floor, gamma: as in labels_to_colors.
     """
     colors = np.zeros((len(confidences), 3), dtype=np.float32)
-    if label_id not in label_id_to_color:
-        return colors
-    base = np.array(label_id_to_color[label_id], dtype=np.float32) / 255.0
     c = np.asarray(confidences, dtype=np.float32).reshape(-1)
-    colors[:] = base * c[:, np.newaxis]
+    if normalize_range:
+        c_min, c_max = np.min(c), np.max(c)
+        rng = c_max - c_min
+        if rng <= 0:
+            rng = 1.0
+        c = (c - c_min) / rng
+    t = _apply_value_curve(c, value_floor=value_floor, gamma=gamma)
+    if grayscale:
+        # White (high) to black (low); use value_floor=0 for full range
+        colors[:] = t[:, np.newaxis]
+    else:
+        if label_id not in label_id_to_color:
+            return colors
+        base = np.array(label_id_to_color[label_id], dtype=np.float32) / 255.0
+        colors[:] = base * t[:, np.newaxis]
     return colors
 
 
@@ -387,7 +420,9 @@ def transform_points_to_world(points_xyz, position, quaternion, body_to_lidar_tf
 
 
 def plot_map(dataset_path, seq_name, label_config, single_label_id=None,
-             max_scans=None, downsample_factor=1, voxel_size=0.1, max_distance=None):
+             max_scans=None, downsample_factor=1, voxel_size=0.1, max_distance=None,
+             single_label_normalize_range=True, value_floor=0.12, gamma=0.65,
+             single_label_grayscale=False):
     """
     Load lidar bin files with multiclass confidence scores, transform using poses, and visualize with Open3D.
     Uses only multiclass_confidence_scores (float16 [N, C]); no single-channel label files.
@@ -396,11 +431,10 @@ def plot_map(dataset_path, seq_name, label_config, single_label_id=None,
         dataset_path: Path to dataset directory
         seq_name: Name of the sequence
         label_config: Dict from load_label_config() (labels, color_map_rgb, learning_map_inv)
-        single_label_id: If set, visualize one label's confidence (full color at 1, black at 0). Else argmax colors.
-        max_scans: Maximum number of scans to process (None for all)
-        downsample_factor: Process every Nth scan (1 = all scans)
-        voxel_size: Voxel size in meters for downsampling (default: 0.1m, set to None to disable)
-        max_distance: Maximum distance in meters from origin to keep points (None to keep all points)
+        single_label_id: If set, visualize one label's confidence. Else argmax colors.
+        single_label_normalize_range: If True, map single-label confidence range to [0,1] for visibility.
+        value_floor: Minimum brightness (0..1). Avoids pure black.
+        gamma: Gamma for mid-tone contrast (<1 brightens mid-tones).
     """
     root_path = os.path.join(dataset_path, seq_name)
     data_dir = os.path.join(root_path, "lidar_bin/data")
@@ -525,12 +559,20 @@ def plot_map(dataset_path, seq_name, label_config, single_label_id=None,
                     continue
                 class_idx = label_id_to_class_idx[single_label_id]
                 confidences = np.asarray(multiclass_probs[:, class_idx], dtype=np.float32)
-                colors = single_label_confidence_to_colors(confidences, single_label_id, label_id_to_color)
+                colors = single_label_confidence_to_colors(
+                    confidences, single_label_id, label_id_to_color,
+                    normalize_range=single_label_normalize_range,
+                    value_floor=value_floor, gamma=gamma,
+                    grayscale=single_label_grayscale,
+                )
             else:
                 class_indices = np.argmax(multiclass_probs, axis=1)
                 confidences = np.max(multiclass_probs, axis=1)
                 semantic_label_ids = map_class_indices_to_labels(class_indices, learning_map_inv)
-                colors = labels_to_colors(semantic_label_ids, label_id_to_color, confidences=confidences)
+                colors = labels_to_colors(
+                    semantic_label_ids, label_id_to_color, confidences=confidences,
+                    value_floor=value_floor, gamma=gamma,
+                )
         except Exception as e:
             tqdm.write(f"  Error loading multiclass from {bin_file}: {e}")
             continue
@@ -589,7 +631,16 @@ def plot_map(dataset_path, seq_name, label_config, single_label_id=None,
     print("  - Mouse wheel: Zoom")
     print("  - Q or ESC: Quit")
     
-    o3d.visualization.draw_geometries([pcd])
+    if single_label_grayscale:
+        vis = o3d.visualization.Visualizer()
+        vis.create_window()
+        vis.add_geometry(pcd)
+        opt = vis.get_render_option()
+        opt.background_color = np.array([0.5, 0.5, 0.5], dtype=np.float64)
+        vis.run()
+        vis.destroy_window()
+    else:
+        o3d.visualization.draw_geometries([pcd])
 
 
 if __name__ == '__main__':
@@ -609,8 +660,12 @@ if __name__ == '__main__':
     parser.add_argument("--max-scans", type=int, default=5000, help="Max scans to process (0 or None for all)")
     parser.add_argument("--downsample-factor", type=int, default=200, help="Process every Nth scan")
     parser.add_argument("--voxel-size", type=float, default=2.0, help="Voxel size in meters")
-    parser.add_argument("--max-distance", type=float, default=200.0, help="Max distance from pose to keep points (m)")
+    parser.add_argument("--max-distance", type=float, default=100.0, help="Max distance from pose to keep points (m)")
     parser.add_argument("--config", type=str, default=None, help="Path to MCD label config YAML (default: ce_net/config/data_cfg_mcd.yaml)")
+    parser.add_argument("--no-normalize", action="store_true", help="Single-label: use raw probability (0=black, 1=full) instead of normalizing range")
+    parser.add_argument("--value-floor", type=float, default=0.12, metavar="F", help="Minimum brightness 0..1 (default 0.12); with --grayscale points use 0 (white to black)")
+    parser.add_argument("--gamma", type=float, default=0.65, metavar="G", help="Gamma for mid-tone contrast (default 0.65; <1 brightens mid-tones)")
+    parser.add_argument("--grayscale", action="store_true", help="Single-label: points white (high) to black (low); scene background gray")
     args = parser.parse_args()
 
     config_path = args.config or DEFAULT_CONFIG_PATH
@@ -627,6 +682,11 @@ if __name__ == '__main__':
             sys.exit(1)
         print(f"Single-label mode: showing confidence for '{single_label_name}' (id={single_label_id})")
 
+    # With --grayscale, points are white→black (value_floor=0); scene background is set to gray in the viewer
+    value_floor = args.value_floor
+    if args.grayscale and single_label_id is not None:
+        value_floor = 0.0
+
     max_scans = args.max_scans if args.max_scans else None
     seq_names = args.seq
 
@@ -640,4 +700,8 @@ if __name__ == '__main__':
             downsample_factor=args.downsample_factor,
             voxel_size=args.voxel_size,
             max_distance=args.max_distance,
+            single_label_normalize_range=not args.no_normalize,
+            value_floor=value_floor,
+            gamma=args.gamma,
+            single_label_grayscale=args.grayscale,
         )
