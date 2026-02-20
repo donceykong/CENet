@@ -18,13 +18,13 @@ from pathlib import Path
 import open3d as o3d
 import yaml
 
-# Add parent directory to path to import utilities
-sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
+# Project root (repo root containing ce_net): two levels up from test_scripts/mcd/
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _PROJECT_ROOT)
 from ce_net.utils.file_io import read_bin_file
 
-# Default config path: ce_net/config/data_cfg_mcd.yaml (relative to this script's directory)
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CONFIG_PATH = os.path.join(_SCRIPT_DIR, "ce_net", "config", "data_cfg_mcd.yaml")
+# Default config path relative to project root
+DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "ce_net", "config", "data_cfg_mcd.yaml")
 
 
 def load_label_config(config_path):
@@ -51,6 +51,38 @@ def load_label_config(config_path):
         "color_map_rgb": color_map_rgb,
         "learning_map_inv": {int(k): int(v) for k, v in learning_map_inv.items()},
     }
+
+
+# Viridis colormap LUT (dark purple/blue -> green -> yellow)
+_VIRIDIS_KEY = np.array([
+    [0.267004, 0.004874, 0.329415],
+    [0.282327, 0.140926, 0.457517],
+    [0.127568, 0.566949, 0.550556],
+    [0.369214, 0.788888, 0.383287],
+    [0.993248, 0.906157, 0.143936],
+], dtype=np.float32)
+_VIRIDIS_LUT = np.zeros((256, 3), dtype=np.float32)
+for i in range(256):
+    t = i / 255.0
+    idx = t * 4
+    j = int(np.clip(np.floor(idx), 0, 3))
+    u = idx - j
+    _VIRIDIS_LUT[i] = (1 - u) * _VIRIDIS_KEY[j] + u * _VIRIDIS_KEY[j + 1]
+
+
+def scalar_to_viridis_rgb(values, normalize_range=True):
+    """Map scalar values to RGB using Viridis (dark=low, yellow=high). Returns (N, 3) in [0, 1]."""
+    v = np.asarray(values, dtype=np.float32).reshape(-1)
+    if normalize_range:
+        vmin, vmax = np.min(v), np.max(v)
+        rng = vmax - vmin
+        if rng <= 0:
+            rng = 1.0
+        v = (v - vmin) / rng
+    v = np.clip(v, 0.0, 1.0)
+    idx = (v * 255).astype(np.int32)
+    idx = np.clip(idx, 0, 255)
+    return _VIRIDIS_LUT[idx].copy()
 
 
 def _apply_value_curve(t, value_floor=0.0, gamma=1.0):
@@ -266,6 +298,7 @@ def main():
     parser.add_argument("--value-floor", type=float, default=0.12, metavar="F", help="Minimum brightness 0..1 (default 0.12); with --grayscale points use 0 (white to black)")
     parser.add_argument("--gamma", type=float, default=0.65, metavar="G", help="Gamma for mid-tone contrast (default 0.65)")
     parser.add_argument("--grayscale", action="store_true", help="Single-label: points white (high) to black (low); scene background gray")
+    parser.add_argument("--variance", action="store_true", help="View variance of class probabilities (Viridis); gray background")
     args = parser.parse_args()
 
     dataset_path = args.dataset_path
@@ -347,7 +380,16 @@ def main():
 
         single_label_id = None
         single_label_name = None
-        if args.single_label is not None:
+        if args.variance:
+            # Variance: high = confident, low = uncertain. Invert so uncertain -> yellow.
+            variances = np.var(multiclass_probs.astype(np.float32), axis=1)
+            n_classes = multiclass_probs.shape[1]
+            max_var = (n_classes - 1) / (n_classes ** 2) if n_classes > 1 else 1.0
+            scaled = np.clip(variances / max_var, 0.0, 1.0)
+            uncertainty = 1.0 - scaled
+            colors = scalar_to_viridis_rgb(uncertainty, normalize_range=False)
+            print(f"Variance view (scaled so max=1): min={np.min(variances):.4f}, max={np.max(variances):.4f}, mean={np.mean(variances):.4f}")
+        elif args.single_label is not None:
             single_label_id, single_label_name = _parse_single_label(
                 args.single_label, label_config
             )
@@ -385,7 +427,9 @@ def main():
         pcd.colors = o3d.utility.Vector3dVector(colors)
 
         print(f"Point cloud created with {len(points_xyz)} points")
-        if single_label_id is not None:
+        if args.variance:
+            print("View: variance (Viridis)")
+        elif single_label_id is not None:
             print(f"Single-label view: {single_label_name} (id={single_label_id})")
         else:
             print(f"Number of unique classes: {len(unique_labels)}")
@@ -397,8 +441,8 @@ def main():
         print("="*80)
         print("\nOpening visualization window...")
         
-        # Visualize (gray scene background when --grayscale)
-        if args.grayscale and single_label_id is not None:
+        # Visualize (gray scene background when --grayscale or --variance)
+        if (args.grayscale and single_label_id is not None) or args.variance:
             vis = o3d.visualization.Visualizer()
             vis.create_window()
             vis.add_geometry(pcd)

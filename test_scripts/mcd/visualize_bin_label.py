@@ -11,8 +11,9 @@ import sys
 import numpy as np
 import open3d as o3d
 
-# Import dataset_binarize package to set up sys.path for ce_net imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Project root (repo root containing ce_net): two levels up from test_scripts/mcd/
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _PROJECT_ROOT)
 from ce_net.utils.file_io import read_bin_file
 
 # Import semantic labels for color mapping

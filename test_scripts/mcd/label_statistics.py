@@ -12,17 +12,16 @@ import numpy as np
 from collections import defaultdict
 from tqdm import tqdm
 
-# Import dataset_binarize package to set up sys.path for ce_net imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Project root (repo root containing ce_net): two levels up from test_scripts/mcd/
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _PROJECT_ROOT)
 from ce_net.utils.file_io import read_bin_file
 
 
 def load_label_names(config_path=None):
     """Load label id -> name from data_cfg_mcd.yaml."""
     if config_path is None:
-        config_path = os.path.join(
-            os.path.dirname(__file__), "ce_net", "config", "data_cfg_mcd.yaml"
-        )
+        config_path = os.path.join(_PROJECT_ROOT, "ce_net", "config", "data_cfg_mcd.yaml")
     with open(config_path, "r") as f:
         data = yaml.safe_load(f)
     labels = data.get("labels", {})

@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
+import argparse
 import os
 import sys
 import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 import open3d as o3d
+import yaml
 from tqdm import tqdm
-from collections import namedtuple
 
-# Import dataset_binarize package to set up sys.path for lidar2osm imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Resolve project root (repo root containing ce_net): two levels up from test_scripts/mcd/
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _PROJECT_ROOT)
 from ce_net.utils.file_io import read_bin_file
+
+# MCD label config path relative to project root
+DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "ce_net", "config", "data_cfg_mcd.yaml")
 
 # Body to LiDAR transformation matrix
 BODY_TO_LIDAR_TF = np.array([
@@ -38,110 +43,167 @@ def read_bin_file(file_path, dtype, shape=None):
     return data
 
 
-Label = namedtuple(
-    "Label",
-    [
-        "name",  # The identifier of this label, e.g. 'car', 'person', ... .
-        "id",  # An integer ID that is associated with this label.
-        "color",  # The color of this label
-    ],
-)
-
-sem_kitti_labels = [
-    # name, id, color
-    Label("unlabeled", 0, (0, 0, 0)),
-    Label("outlier", 1, (0, 0, 0)),
-    Label("car", 10, (0, 0, 142)),
-    Label("bicycle", 11, (119, 11, 32)),
-    Label("bus", 13, (250, 80, 100)),
-    Label("motorcycle", 15, (0, 0, 230)),
-    Label("on-rails", 16, (255, 0, 0)),
-    Label("truck", 18, (0, 0, 70)),
-    Label("other-vehicle", 20, (51, 0, 51)),
-    Label("person", 30, (220, 20, 60)),
-    Label("bicyclist", 31, (200, 40, 255)),
-    Label("motorcyclist", 32, (90, 30, 150)),
-    Label("road", 40, (128, 64, 128)),
-    Label("parking", 44, (250, 170, 160)),
-    Label("OSM BUILDING", 45, (0, 0, 255)),   # OSM
-    Label("OSM ROAD", 46, (255, 0, 0)),       # OSM
-    Label("sidewalk", 48, (244, 35, 232)),
-    Label("other-ground", 49, (81, 0, 81)),
-    Label("building", 50, (0, 100, 0)),
-    Label("fence", 51, (190, 153, 153)),
-    Label("other-structure", 52, (0, 150, 255)),
-    Label("lane-marking", 60, (170, 255, 150)),
-    Label("vegetation", 70, (107, 142, 35)),
-    Label("trunk", 71, (0, 60, 135)),
-    Label("terrain", 72, (152, 251, 152)),
-    Label("pole", 80, (153, 153, 153)),
-    Label("traffic-sign", 81, (0, 0, 255)),
-    Label("other-object", 99, (255, 255, 50)),
-]
-
-# Create a mapping from sem_kitti label names to colors for reuse
-_sem_kitti_color_map = {label.name: label.color for label in sem_kitti_labels}
-
-# Semantic labels (converted from dictionary to namedtuple list)
-# Colors are reused from sem_kitti_labels where names match
-semantic_labels = [
-    Label("barrier", 0, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("bike", 1, _sem_kitti_color_map["bicycle"]),  # Matches sem_kitti "bicycle"
-    Label("building", 2, _sem_kitti_color_map["building"]),  # Matches sem_kitti "building"
-    Label("chair", 3, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("cliff", 4, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("container", 5, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("curb", 6, _sem_kitti_color_map["sidewalk"]),  # Placeholder color, needs assignment
-    Label("fence", 7, _sem_kitti_color_map["fence"]),  # Matches sem_kitti "fence"
-    Label("hydrant", 8, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("infosign", 9, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("lanemarking", 10, _sem_kitti_color_map["lane-marking"]),  # Matches sem_kitti "lane-marking"
-    Label("noise", 11, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("other", 12, _sem_kitti_color_map["other-object"]),  # Matches sem_kitti "other-object"
-    Label("parkinglot", 13, _sem_kitti_color_map["parking"]),  # Matches sem_kitti "parking"
-    Label("pedestrian", 14, _sem_kitti_color_map["person"]),  # Matches sem_kitti "person"
-    Label("pole", 15, _sem_kitti_color_map["pole"]),  # Matches sem_kitti "pole"
-    Label("road", 16, _sem_kitti_color_map["road"]),  # Matches sem_kitti "road"
-    Label("shelter", 17, _sem_kitti_color_map["building"]),  # Placeholder color, needs assignment
-    Label("sidewalk", 18, _sem_kitti_color_map["sidewalk"]),  # Matches sem_kitti "sidewalk"
-    Label("stairs", 19, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("structure-other", 20, _sem_kitti_color_map["other-structure"]),  # Matches sem_kitti "other-structure"
-    Label("traffic-cone", 21, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("traffic-sign", 22, _sem_kitti_color_map["traffic-sign"]),  # Matches sem_kitti "traffic-sign"
-    Label("trashbin", 23, (0, 0, 0)),  # Placeholder color, needs assignment
-    Label("treetrunk", 24, _sem_kitti_color_map["trunk"]),  # Matches sem_kitti "trunk"
-    Label("vegetation", 25, _sem_kitti_color_map["vegetation"]),  # Matches sem_kitti "vegetation"
-    Label("vehicle-dynamic", 26, _sem_kitti_color_map["car"]),  # Matches sem_kitti "car"
-    Label("vehicle-other", 27, _sem_kitti_color_map["car"]),  # Matches sem_kitti "other-vehicle"
-    Label("vehicle-static", 28, _sem_kitti_color_map["car"]),  # Matches sem_kitti "car"
-]
-
-def labels_to_colors(labels):
+def load_label_config(config_path):
     """
-    Convert semantic label IDs to RGB colors using semantic_labels.
-    
-    Args:
-        labels: (N,) array of semantic label IDs
-    
-    Returns:
-        colors: (N, 3) array of RGB colors in [0, 1] range
+    Load label definitions (names, color_map, learning_map_inv) from MCD YAML config.
+    Returns dict with labels, color_map_rgb (id -> (r,g,b) 0-255), learning_map_inv.
     """
-    # Create a mapping from label ID to color (RGB tuple in 0-255 range)
-    label_id_to_color = {label.id: label.color for label in semantic_labels}
-    
-    # Map labels to colors
-    colors = np.zeros((len(labels), 3), dtype=np.float32)
+    with open(config_path, "r") as f:
+        cfg = yaml.safe_load(f)
+    labels = cfg.get("labels", {})
+    color_map_bgr = cfg.get("color_map", {})
+    learning_map_inv = cfg.get("learning_map_inv", {})
+    color_map_rgb = {}
+    for k, bgr in color_map_bgr.items():
+        color_map_rgb[int(k)] = (int(bgr[2]), int(bgr[1]), int(bgr[0]))
+    return {
+        "labels": {int(k): v for k, v in labels.items()},
+        "color_map_rgb": color_map_rgb,
+        "learning_map_inv": {int(k): int(v) for k, v in learning_map_inv.items()},
+    }
+
+
+def get_label_id_to_class_index(learning_map_inv):
+    """Map semantic label ID -> class index for indexing multiclass_probs."""
+    return {int(v): int(k) for k, v in learning_map_inv.items()}
+
+
+def map_class_indices_to_labels(class_indices, learning_map_inv):
+    """Map class indices (0..n_classes-1) to semantic label IDs."""
+    maxkey = max(learning_map_inv.keys(), default=0)
+    lut = np.zeros((maxkey + 100), dtype=np.int32)
+    for key, value in learning_map_inv.items():
+        try:
+            lut[int(key)] = int(value)
+        except IndexError:
+            pass
+    return lut[class_indices]
+
+
+# Viridis colormap (standard key points, interpolated to 256 entries): dark purple/blue -> green -> yellow
+_VIRIDIS_KEY = np.array([
+    [0.267004, 0.004874, 0.329415],
+    [0.282327, 0.140926, 0.457517],
+    [0.127568, 0.566949, 0.550556],
+    [0.369214, 0.788888, 0.383287],
+    [0.993248, 0.906157, 0.143936],
+], dtype=np.float32)
+_VIRIDIS_LUT = np.zeros((256, 3), dtype=np.float32)
+for i in range(256):
+    t = i / 255.0
+    idx = t * 4  # 4 segments between 5 key points
+    j = int(np.clip(np.floor(idx), 0, 3))
+    u = idx - j
+    _VIRIDIS_LUT[i] = (1 - u) * _VIRIDIS_KEY[j] + u * _VIRIDIS_KEY[j + 1]
+
+
+def scalar_to_viridis_rgb(values, normalize_range=True):
+    """
+    Map scalar values to RGB using the Viridis colormap (dark = low, yellow = high).
+    values: (N,) array. If normalize_range=True, map [min, max] to [0, 1] before lookup.
+    Returns (N, 3) RGB in [0, 1].
+    """
+    v = np.asarray(values, dtype=np.float32).reshape(-1)
+    if normalize_range:
+        vmin, vmax = np.min(v), np.max(v)
+        rng = vmax - vmin
+        if rng <= 0:
+            rng = 1.0
+        v = (v - vmin) / rng
+    v = np.clip(v, 0.0, 1.0)
+    idx = (v * 255).astype(np.int32)
+    idx = np.clip(idx, 0, 255)
+    return _VIRIDIS_LUT[idx].copy()
+
+
+def _apply_value_curve(t, value_floor=0.0, gamma=1.0):
+    """
+    Map values in [0, 1] to output brightness for better visibility.
+    value_floor: minimum output (e.g. 0.15 so low confidence isn't pure black).
+    gamma: < 1 brightens mid-tones, > 1 darkens them.
+    """
+    t = np.clip(np.asarray(t, dtype=np.float32), 0.0, 1.0)
+    if gamma != 1.0:
+        t = np.power(t, gamma)
+    if value_floor > 0:
+        t = value_floor + (1.0 - value_floor) * t
+    return t
+
+
+def labels_to_colors(labels, label_id_to_color, confidences=None, value_floor=0.15, gamma=1.0):
+    """
+    Convert semantic label IDs to RGB colors. If confidences is given, modulate brightness
+    (lower confidence = darker). Normalizes confidence range per batch; optional floor/gamma
+    improve visibility (avoid pure black, better mid-tone contrast).
+    """
+    n = len(labels)
+    colors = np.zeros((n, 3), dtype=np.float32)
+    if confidences is None:
+        confidences = np.ones(n, dtype=np.float32)
+    else:
+        confidences = np.asarray(confidences, dtype=np.float32).reshape(-1)
+    max_c = np.max(confidences)
+    min_c = np.min(confidences)
+    rng = max_c - min_c
+    if rng <= 0:
+        rng = 1.0
+    t = (confidences - min_c) / rng
+    t = _apply_value_curve(t, value_floor=value_floor, gamma=gamma)
     for i, label_id in enumerate(labels):
-        label_id_int = int(label_id)
-        if label_id_int in label_id_to_color:
-            # Convert from (0-255) range to (0-1) range
-            color_255 = label_id_to_color[label_id_int]
-            colors[i] = np.array(color_255, dtype=np.float32) / 255.0
+        lid = int(label_id)
+        if lid in label_id_to_color:
+            base = np.array(label_id_to_color[lid], dtype=np.float32) / 255.0
+            colors[i] = base * t[i]
         else:
-            # Unknown label, use gray
             colors[i] = [0.5, 0.5, 0.5]
-    
     return colors
+
+
+def single_label_confidence_to_colors(confidences, label_id, label_id_to_color,
+                                      normalize_range=True, value_floor=0.12, gamma=0.65,
+                                      grayscale=False):
+    """
+    Color by one label's confidence.
+    - grayscale=False: high = label color, low = dark (with value_floor).
+    - grayscale=True: high = white, low = black (use value_floor=0 for full range). Scene background gray is set in the viewer.
+    - normalize_range, value_floor, gamma: as in labels_to_colors.
+    """
+    colors = np.zeros((len(confidences), 3), dtype=np.float32)
+    c = np.asarray(confidences, dtype=np.float32).reshape(-1)
+    if normalize_range:
+        c_min, c_max = np.min(c), np.max(c)
+        rng = c_max - c_min
+        if rng <= 0:
+            rng = 1.0
+        c = (c - c_min) / rng
+    t = _apply_value_curve(c, value_floor=value_floor, gamma=gamma)
+    if grayscale:
+        # White (high) to black (low); use value_floor=0 for full range
+        colors[:] = t[:, np.newaxis]
+    else:
+        if label_id not in label_id_to_color:
+            return colors
+        base = np.array(label_id_to_color[label_id], dtype=np.float32) / 255.0
+        colors[:] = base * t[:, np.newaxis]
+    return colors
+
+
+def _parse_single_label(single_label_arg, label_config):
+    """Parse --single-label: accept label name or id. Return (label_id, label_name) or (None, None)."""
+    labels_by_id = label_config["labels"]
+    labels_by_name = {v: k for k, v in labels_by_id.items()}
+    try:
+        lid = int(single_label_arg)
+        if lid in labels_by_id:
+            return lid, labels_by_id[lid]
+        return None, None
+    except ValueError:
+        pass
+    for name, lid in labels_by_name.items():
+        if name.lower() == single_label_arg.lower():
+            return lid, name
+    return None, None
+
 
 def load_poses(poses_file):
     """
@@ -393,24 +455,25 @@ def transform_points_to_world(points_xyz, position, quaternion, body_to_lidar_tf
     return world_points_xyz
 
 
-def plot_map(dataset_path, seq_name, max_scans=None, downsample_factor=1, voxel_size=0.1, max_distance=None):
+def plot_map(dataset_path, seq_name, label_config, single_label_id=None,
+             max_scans=None, downsample_factor=1, voxel_size=0.1, max_distance=None,
+             single_label_normalize_range=True, value_floor=0.12, gamma=0.65,
+             single_label_grayscale=False, view_variance=False):
     """
-    Load lidar bin files with semantic labels, transform using poses, and visualize with Open3D.
+    Load lidar bin files with multiclass confidence scores, transform using poses, and visualize with Open3D.
+    Uses only multiclass_confidence_scores (float16 [N, C]); no single-channel label files.
     
     Args:
-        dataset_path: Path to dataset directory
-        seq_name: Name of the sequence
-        max_scans: Maximum number of scans to process (None for all)
-        downsample_factor: Process every Nth scan (1 = all scans)
-        voxel_size: Voxel size in meters for downsampling (default: 0.1m, set to None to disable)
-        max_distance: Maximum distance in meters from origin to keep points (None to keep all points)
+        view_variance: If True, color by variance of class probabilities (Viridis); ignores single_label.
     """
     root_path = os.path.join(dataset_path, seq_name)
     data_dir = os.path.join(root_path, "lidar_bin/data")
     timestamps_file = os.path.join(root_path, "lidar_bin/timestamps.txt")
     poses_file = os.path.join(root_path, "pose_inW.csv")
-    labels_dir = os.path.join(root_path, "inferred_labels", "cenet_mcd")
-    # labels_dir = os.path.join(root_path, "gt_labels")
+    multiclass_dir = os.path.join(root_path, "inferred_labels", "cenet_mcd", "multiclass_confidence_scores")
+
+    learning_map_inv = label_config["learning_map_inv"]
+    label_id_to_color = label_config["color_map_rgb"]
 
     # Check if files exist
     if not os.path.exists(data_dir):
@@ -425,8 +488,8 @@ def plot_map(dataset_path, seq_name, max_scans=None, downsample_factor=1, voxel_
         print(f"ERROR: Poses file not found: {poses_file}")
         return
     
-    if not os.path.exists(labels_dir):
-        print(f"ERROR: Labels directory not found: {labels_dir}")
+    if not os.path.exists(multiclass_dir):
+        print(f"ERROR: Multiclass labels directory not found: {multiclass_dir}")
         return
     
     # Load timestamps
@@ -504,27 +567,51 @@ def plot_map(dataset_path, seq_name, max_scans=None, downsample_factor=1, voxel_
             tqdm.write(f"  Error loading {bin_file}: {e}")
             continue
         
-        # Load corresponding label file
-        label_file = bin_file  # Label file should have same name as bin file
-        label_path = os.path.join(labels_dir, label_file)
-        
-        if not os.path.exists(label_path):
-            tqdm.write(f"  WARNING: Label file not found: {label_file}, skipping scan")
+        # Load multiclass confidence scores (float16, shape [n_points * n_classes])
+        multiclass_path = os.path.join(multiclass_dir, bin_file)
+        if not os.path.exists(multiclass_path):
+            tqdm.write(f"  WARNING: Multiclass file not found: {bin_file}, skipping scan")
             continue
         
         try:
-            # Load labels (assuming int32 format)
-            labels = read_bin_file(label_path, dtype=np.int32, shape=(-1))
-            
-            # Validate that labels match points
-            if len(labels) != len(points_xyz):
-                tqdm.write(f"  WARNING: Label count ({len(labels)}) != point count ({len(points_xyz)}) for {bin_file}, skipping")
+            raw_probs = read_bin_file(multiclass_path, dtype=np.float16)
+            n_points = len(points_xyz)
+            n_classes = len(raw_probs) // n_points
+            if len(raw_probs) != n_points * n_classes:
+                tqdm.write(f"  WARNING: Multiclass size {len(raw_probs)} != {n_points} * n_classes for {bin_file}, skipping")
                 continue
+            multiclass_probs = raw_probs.reshape(n_points, n_classes)
             
-            # Convert labels to colors
-            colors = labels_to_colors(labels)
+            if view_variance:
+                # Variance: high = one-hot (confident), low = uniform (uncertain). Invert so uncertain -> yellow.
+                variances = np.var(multiclass_probs.astype(np.float32), axis=1)
+                max_var = (n_classes - 1) / (n_classes ** 2) if n_classes > 1 else 1.0
+                scaled = np.clip(variances / max_var, 0.0, 1.0)
+                uncertainty = 1.0 - scaled  # 1 = uncertain, 0 = confident
+                colors = scalar_to_viridis_rgb(uncertainty, normalize_range=False)
+            elif single_label_id is not None:
+                label_id_to_class_idx = get_label_id_to_class_index(learning_map_inv)
+                if single_label_id not in label_id_to_class_idx:
+                    tqdm.write(f"  WARNING: No class index for label id {single_label_id}, skipping scan")
+                    continue
+                class_idx = label_id_to_class_idx[single_label_id]
+                confidences = np.asarray(multiclass_probs[:, class_idx], dtype=np.float32)
+                colors = single_label_confidence_to_colors(
+                    confidences, single_label_id, label_id_to_color,
+                    normalize_range=single_label_normalize_range,
+                    value_floor=value_floor, gamma=gamma,
+                    grayscale=single_label_grayscale,
+                )
+            else:
+                class_indices = np.argmax(multiclass_probs, axis=1)
+                confidences = np.max(multiclass_probs, axis=1)
+                semantic_label_ids = map_class_indices_to_labels(class_indices, learning_map_inv)
+                colors = labels_to_colors(
+                    semantic_label_ids, label_id_to_color, confidences=confidences,
+                    value_floor=value_floor, gamma=gamma,
+                )
         except Exception as e:
-            tqdm.write(f"  Error loading labels from {label_file}: {e}")
+            tqdm.write(f"  Error loading multiclass from {bin_file}: {e}")
             continue
         
         # Transform to world coordinates (apply body-to-lidar transformation)
@@ -581,43 +668,79 @@ def plot_map(dataset_path, seq_name, max_scans=None, downsample_factor=1, voxel_
     print("  - Mouse wheel: Zoom")
     print("  - Q or ESC: Quit")
     
-    o3d.visualization.draw_geometries([pcd])
-    
-    # Save to PLY file
-    # Extract sequence name from root_path (e.g., "kth_day_06" from "/path/to/MCD/kth_day_06")
-    ply_dir = os.path.join(root_path, "ply")
-    ply_filename = f"inferred_labels_{seq_name}.ply"
-    ply_path = os.path.join(ply_dir, ply_filename)
-    
-    # Create ply directory if it doesn't exist
-    if not os.path.exists(ply_dir):
-        os.makedirs(ply_dir)
-        print(f"Created directory: {ply_dir}")
-    
-    # Save point cloud
-    print(f"\nSaving point cloud to: {ply_path}")
-    o3d.io.write_point_cloud(ply_path, pcd)
-    print(f"Successfully saved {len(accumulated_points)} points to {ply_path}")
+    if single_label_grayscale or view_variance:
+        vis = o3d.visualization.Visualizer()
+        vis.create_window()
+        vis.add_geometry(pcd)
+        opt = vis.get_render_option()
+        opt.background_color = np.array([0.5, 0.5, 0.5], dtype=np.float64)
+        vis.run()
+        vis.destroy_window()
+    else:
+        o3d.visualization.draw_geometries([pcd])
 
 
 if __name__ == '__main__':
-    # Update these paths to match your setup
-    dataset_path = "/media/donceykong/doncey_ssd_02/datasets/MCD"
-    seq_names = ["kth_day_09"]
+    parser = argparse.ArgumentParser(
+        description="Visualize accumulated map from lidar + multiclass confidence scores. "
+                    "Optionally show single-label confidence (--single-label)."
+    )
+    parser.add_argument("--dataset-path", type=str, default="/media/donceykong/doncey_ssd_02/datasets/MCD")
+    parser.add_argument("--seq", type=str, nargs="+", default=["kth_day_09"], help="Sequence name(s)")
+    parser.add_argument(
+        "--single-label",
+        type=str,
+        default=None,
+        metavar="NAME_OR_ID",
+        help="View confidence for one label only (e.g. vehicle-static or 28). Full color = high, black = zero.",
+    )
+    parser.add_argument("--max-scans", type=int, default=10000, help="Max scans to process (0 or None for all)")
+    parser.add_argument("--downsample-factor", type=int, default=10, help="Process every Nth scan")
+    parser.add_argument("--voxel-size", type=float, default=2.0, help="Voxel size in meters")
+    parser.add_argument("--max-distance", type=float, default=100.0, help="Max distance from pose to keep points (m)")
+    parser.add_argument("--config", type=str, default=None, help="Path to MCD label config YAML (default: ce_net/config/data_cfg_mcd.yaml)")
+    parser.add_argument("--no-normalize", action="store_true", help="Single-label: use raw probability (0=black, 1=full) instead of normalizing range")
+    parser.add_argument("--value-floor", type=float, default=0.12, metavar="F", help="Minimum brightness 0..1 (default 0.12); with --grayscale points use 0 (white to black)")
+    parser.add_argument("--gamma", type=float, default=0.65, metavar="G", help="Gamma for mid-tone contrast (default 0.65; <1 brightens mid-tones)")
+    parser.add_argument("--grayscale", action="store_true", help="Single-label: points white (high) to black (low); scene background gray")
+    parser.add_argument("--variance", action="store_true", help="View variance of class probabilities (Viridis: dark=low var, yellow=high var); gray background")
+    args = parser.parse_args()
 
-    # Optional: limit number of scans for faster visualization
-    # max_scans = 100  # Set to None to process all scans
-    max_scans = 5000
-    
-    # Optional: downsample scans (process every Nth scan)
-    downsample_factor = 200  # Set to 1 to process all scans, 2 for every other scan, etc.
-    
-    # Voxel size for downsampling (in meters)
-    voxel_size = 2.0  # 1m voxels
-    
-    # Maximum distance from origin to keep points (in meters)
-    max_distance = 200.0  # e.g., 100.0 to keep points within 100m from origin
+    config_path = args.config or DEFAULT_CONFIG_PATH
+    if not os.path.exists(config_path):
+        print(f"ERROR: Config not found: {config_path}")
+        sys.exit(1)
+    label_config = load_label_config(config_path)
+
+    single_label_id = None
+    if args.single_label is not None:
+        single_label_id, single_label_name = _parse_single_label(args.single_label, label_config)
+        if single_label_id is None:
+            print(f"ERROR: Unknown label '{args.single_label}'. Use a label name or id from the config.")
+            sys.exit(1)
+        print(f"Single-label mode: showing confidence for '{single_label_name}' (id={single_label_id})")
+
+    # With --grayscale, points are white→black (value_floor=0); scene background is set to gray in the viewer
+    value_floor = args.value_floor
+    if args.grayscale and single_label_id is not None:
+        value_floor = 0.0
+
+    max_scans = args.max_scans if args.max_scans else None
+    seq_names = args.seq
 
     for seq_name in seq_names:
-        plot_map(dataset_path, seq_name, max_scans=max_scans, downsample_factor=downsample_factor, 
-                 voxel_size=voxel_size, max_distance=max_distance)
+        plot_map(
+            args.dataset_path,
+            seq_name,
+            label_config,
+            single_label_id=single_label_id,
+            max_scans=max_scans,
+            downsample_factor=args.downsample_factor,
+            voxel_size=args.voxel_size,
+            max_distance=args.max_distance,
+            single_label_normalize_range=not args.no_normalize,
+            value_floor=value_floor,
+            gamma=args.gamma,
+            single_label_grayscale=args.grayscale,
+            view_variance=args.variance,
+        )
