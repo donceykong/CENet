@@ -176,9 +176,11 @@ class ResNet_34(nn.Module):
 
         out = self.conv_1(out)
         out = self.conv_2(out)
-        out = self.semantic_output(out)
-
-        out = F.softmax(out, dim=1)
+        logits = self.semantic_output(out)
+        if getattr(self, "return_logits", False):
+            out = logits
+        else:
+            out = F.softmax(logits, dim=1)
 
         if self.aux:
             res_2 = self.aux_head1(res_2)

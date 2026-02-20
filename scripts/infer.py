@@ -22,7 +22,7 @@ def load_yaml(config_path):
 
 if __name__ == "__main__":
     # Default configuration path
-    config = load_yaml(CONFIG_DIR / "inference_cumulti.yaml")
+    config = load_yaml(CONFIG_DIR / "inference_mcd_EDL.yaml")
 
     # Setup command line arguments
     splits = ["train", "valid", "test"]
@@ -91,6 +91,9 @@ if __name__ == "__main__":
         print(e)
         print("Error opening arch yaml file.")
         quit()
+
+    evidential = ARCH.get("train", {}).get("evidential_loss", False)
+    print("Evidential inference (vacuity + Dirichlet probs): %s" % ("ON" if evidential else "OFF (arch has evidential_loss: False or missing)"))
 
     # open data config file
     try:

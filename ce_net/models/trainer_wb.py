@@ -219,6 +219,22 @@ class Trainer:
             self.multi_gpu = True
             self.n_gpus = torch.cuda.device_count()
 
+        self.use_evidential = self.ARCH["train"].get("evidential_loss", False)
+        if self.use_evidential:
+            self.model_single.return_logits = True
+            from ce_net.models.losses.evidential_loss import EvidentialLossCal
+            unc_args = self.ARCH["train"].get("evidential", {
+                "unc_act": "exp", "unc_type": "log", "kl_strength": 0.5, "ohem": None
+            })
+            self.evidential_loss_cal = EvidentialLossCal(
+                unc_args=unc_args,
+                void_index=0,
+                max_epoch=self.ARCH["train"]["max_epochs"],
+                writer=self.tb_logger,
+            )
+        else:
+            self.evidential_loss_cal = None
+
         self.criterion = nn.NLLLoss(weight=self.loss_w).to(self.device)
         self.ls = Lovasz_softmax(ignore=0).to(self.device)
         from ce_net.models.losses.boundary_loss import BoundaryLoss
@@ -607,39 +623,48 @@ class Trainer:
                 if self.ARCH["train"]["aux_loss"]:
                     [output, z2, z4, z8] = model(in_vol)
                     lamda = self.ARCH["train"]["lamda"]
-                    bdlosss = (
-                        self.bd(output, proj_labels.long())
-                        + lamda * self.bd(z2, proj_labels.long())
-                        + lamda * self.bd(z4, proj_labels.long())
-                        + lamda * self.bd(z8, proj_labels.long())
-                    )
-                    loss_m0 = criterion(
-                        torch.log(output.clamp(min=1e-8)), proj_labels
-                    ) + 1.5 * self.ls(output, proj_labels.long())
-                    loss_m2 = criterion(
-                        torch.log(z2.clamp(min=1e-8)), proj_labels
-                    ) + 1.5 * self.ls(z2, proj_labels.long())
-                    loss_m4 = criterion(
-                        torch.log(z4.clamp(min=1e-8)), proj_labels
-                    ) + 1.5 * self.ls(z4, proj_labels.long())
-                    loss_m8 = criterion(
-                        torch.log(z8.clamp(min=1e-8)), proj_labels
-                    ) + 1.5 * self.ls(z8, proj_labels.long())
-                    loss_m = (
-                        loss_m0
-                        + lamda * loss_m2
-                        + lamda * loss_m4
-                        + lamda * loss_m8
-                        + bdlosss
-                    )
+                    if self.use_evidential:
+                        edl_loss = self.evidential_loss_cal.loss(output, proj_labels, i, epoch)
+                        alpha = self.evidential_loss_cal.logit_to_alpha(output)
+                        probs_main = alpha / alpha.sum(dim=1, keepdim=True)
+                        bdlosss = (
+                            self.bd(probs_main, proj_labels.long())
+                            + lamda * self.bd(z2, proj_labels.long())
+                            + lamda * self.bd(z4, proj_labels.long())
+                            + lamda * self.bd(z8, proj_labels.long())
+                        )
+                        loss_m0 = edl_loss + 1.5 * self.ls(probs_main, proj_labels.long())
+                        loss_m2 = criterion(torch.log(z2.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z2, proj_labels.long())
+                        loss_m4 = criterion(torch.log(z4.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z4, proj_labels.long())
+                        loss_m8 = criterion(torch.log(z8.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z8, proj_labels.long())
+                        loss_m = loss_m0 + lamda * loss_m2 + lamda * loss_m4 + lamda * loss_m8 + bdlosss
+                    else:
+                        bdlosss = (
+                            self.bd(output, proj_labels.long())
+                            + lamda * self.bd(z2, proj_labels.long())
+                            + lamda * self.bd(z4, proj_labels.long())
+                            + lamda * self.bd(z8, proj_labels.long())
+                        )
+                        loss_m0 = criterion(torch.log(output.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(output, proj_labels.long())
+                        loss_m2 = criterion(torch.log(z2.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z2, proj_labels.long())
+                        loss_m4 = criterion(torch.log(z4.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z4, proj_labels.long())
+                        loss_m8 = criterion(torch.log(z8.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z8, proj_labels.long())
+                        loss_m = loss_m0 + lamda * loss_m2 + lamda * loss_m4 + lamda * loss_m8 + bdlosss
                 else:
                     output = model(in_vol)
-                    bdlosss = self.bd(output, proj_labels.long())
-                    loss_m = (
-                        criterion(torch.log(output.clamp(min=1e-8)), proj_labels)
-                        + 1.5 * self.ls(output, proj_labels.long())
-                        + bdlosss
-                    )
+                    if self.use_evidential:
+                        edl_loss = self.evidential_loss_cal.loss(output, proj_labels, i, epoch)
+                        alpha = self.evidential_loss_cal.logit_to_alpha(output)
+                        probs = alpha / alpha.sum(dim=1, keepdim=True)
+                        bdlosss = self.bd(probs, proj_labels.long())
+                        loss_m = edl_loss + 1.5 * self.ls(probs, proj_labels.long()) + bdlosss
+                    else:
+                        bdlosss = self.bd(output, proj_labels.long())
+                        loss_m = (
+                            criterion(torch.log(output.clamp(min=1e-8)), proj_labels)
+                            + 1.5 * self.ls(output, proj_labels.long())
+                            + bdlosss
+                        )
 
             optimizer.zero_grad()
 
@@ -808,6 +833,9 @@ class Trainer:
                     [output, z2, z4, z8] = model(in_vol)
                 else:
                     output = model(in_vol)
+                if self.use_evidential:
+                    alpha = self.evidential_loss_cal.logit_to_alpha(output)
+                    output = alpha / alpha.sum(dim=1, keepdim=True)
 
                 log_out = torch.log(output.clamp(min=1e-8))
                 jacc = self.ls(output, proj_labels)

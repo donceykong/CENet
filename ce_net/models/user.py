@@ -127,6 +127,17 @@ class User:
         )
         self.model.load_state_dict(w_dict["state_dict"], strict=True)
 
+        # Evidential uncertainty: when model was trained with evidential_loss, output logits and compute vacuity (K/S)
+        self.use_evidential = self.ARCH["train"].get("evidential_loss", False)
+        if self.use_evidential:
+            self.model.return_logits = True
+            from ce_net.models.losses.evidential_loss import EvidentialLossCal
+            unc_args = self.ARCH["train"].get("evidential", {"unc_act": "exp", "unc_type": "log", "kl_strength": 0.5, "ohem": None})
+            self.evidential_loss_cal = EvidentialLossCal(unc_args=unc_args, void_index=0, max_epoch=1, writer=None)
+            print("Evidential inference: uncertainty (vacuity) will be saved in confidence_scores (higher = more uncertain).")
+        else:
+            self.evidential_loss_cal = None
+
         # use knn post processing?
         self.post = None
         if self.ARCH["post"]["KNN"]["use"]:
@@ -264,8 +275,19 @@ class User:
                         proj_output = self.model(proj_in)
 
                 print(f"\nproj_output.shape: {proj_output.shape}\n\n")
-                # proj_argmax = proj_output[0].argmax(dim=0)
-                conf, proj_argmax = torch.max(proj_output[0], dim=0)
+                if self.use_evidential:
+                    # Evidential: proj_output is logits -> alpha -> vacuity (K/S), predictive probs = alpha/S
+                    alpha = self.evidential_loss_cal.logit_to_alpha(proj_output)
+                    n_classes = alpha.shape[1]
+                    S = alpha.sum(dim=1, keepdim=True)
+                    vacuity = (n_classes / S).squeeze(1)
+                    probs = alpha / S
+                    proj_argmax = alpha.argmax(dim=1)[0]
+                    conf = vacuity[0]
+                    proj_output_for_multiclass = probs
+                else:
+                    conf, proj_argmax = torch.max(proj_output[0], dim=0)
+                    proj_output_for_multiclass = proj_output
                 print(f"\nproj_argmax.shape: {proj_argmax.shape}\n\n")
 
                 if torch.cuda.is_available():
@@ -347,31 +369,38 @@ class User:
                 # # *************** BELOW ADDED BY DONCEY ***************
                 # label_dir = os.path.join(self.dataset_path, self.seq, "inferred_labels")
 
-                # *************** Save confidence mappings for max predictions ***************
+                # *************** Save confidence (or evidential vacuity when use_evidential) ***************
+                # Standard: conf = max class probability. EDL: conf = vacuity K/S (higher = more uncertain)
                 conf_unproj = conf[p_y, p_x]
                 conf_np = conf_unproj.cpu().numpy()
                 conf_np = conf_np.reshape((-1)).astype(np.float16)
-
-                # unconf_np = conf_np[conf_np < 0.5]
-                # print(f"\n\nunconf_np[0]: {len(unconf_np)}\n\n")
 
                 conf_dir = os.path.join(label_dir, "confidence_scores")
                 conf_path = os.path.join(conf_dir, path_name)
                 if not os.path.exists(conf_dir):
                     os.makedirs(conf_dir)
 
+                if self.use_evidential:
+                    if not getattr(self, "_evidential_save_logged", False):
+                        vmin, vmax = float(conf_np.min()), float(conf_np.max())
+                        print(f"[Evidential] Saving vacuity (K/S) to confidence_scores (range [{vmin:.4f}, {vmax:.4f}])")
+                        self._evidential_save_logged = True
                 print(f"Saving confidence scores to {conf_path}\n")
                 conf_np.tofile(conf_path)
 
-                # *************** Save confidence mappings for multi-classes ***************
-                multiclass_conf = proj_output[0]                 # [C, H, W]  (already probabilities)
-                multiclass_conf_unproj = multiclass_conf[:, p_y, p_x].permute(1, 0) # [Points, Classes]
+                # *************** Save multiclass: Dirichlet predictive probs (alpha/S) when EDL, else softmax probs ***************
+                multiclass_conf = proj_output_for_multiclass[0]  # [C, H, W]
+                multiclass_conf_unproj = multiclass_conf[:, p_y, p_x].permute(1, 0)  # [Points, Classes]
                 multiclass_probs_np = multiclass_conf_unproj.detach().cpu().numpy().astype(np.float16)
 
                 multiclass_conf_dir = os.path.join(label_dir, "multiclass_confidence_scores")
                 multiclass_conf_path = os.path.join(multiclass_conf_dir, path_name)
                 if not os.path.exists(multiclass_conf_dir):
                     os.makedirs(multiclass_conf_dir)
-                    
+
+                if self.use_evidential and not getattr(self, "_evidential_multiclass_logged", False):
+                    row_sum = multiclass_probs_np[0].sum()
+                    print(f"[Evidential] Saving Dirichlet predictive probs (alpha/S) to multiclass_confidence_scores (row sum ~ {row_sum:.4f})")
+                    self._evidential_multiclass_logged = True
                 multiclass_probs_np.tofile(multiclass_conf_path)
                 print(f"Saved point probabilities to {multiclass_conf_path} with shape {multiclass_probs_np.shape}")

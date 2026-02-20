@@ -1,0 +1,25 @@
+# TODO: Use dataset_name to determine paths of other fields
+dataset_path: /media/donceykong/doncey_ssd_02/datasets/MCD
+dataset_name: MCD    # "KITTI-360", "CU-MULTI", or "MCD"
+infer_or_train: train     # "train" or "infer"
+data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/data_cfg_mcd.yaml
+
+training:
+  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_style_EDL
+  model_name: cenet_mcd-512-EDL
+  use_progressive_growing: True
+
+  model_configs:
+    cenet_mcd-512-EDL:
+      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_mcd-512-EDL.yaml
+      model_name: cenet_mcd-512-EDL
+      pretrained_model_path:
+    cenet_mcd-1024-EDL:
+      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_mcd-1024p-EDL.yaml
+      model_name: cenet_mcd-1024-EDL
+      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_style_EDL/cenet_mcd-512-EDL
+
+    cenet_mcd-2048-EDL:
+      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_mcd-2048p-EDL.yaml
+      model_name: cenet_mcd-2048-EDL
+      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_style_EDL/cenet_mcd-1024-EDL

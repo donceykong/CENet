@@ -162,7 +162,7 @@ if __name__ == "__main__":
     seed_torch()
 
     # Load configuration
-    base_config = load_yaml(CONFIG_DIR / "training_mcd.yaml")
+    base_config = load_yaml(CONFIG_DIR / "training_mcd_EDL.yaml")
     dataset_name = base_config['dataset_name']
 
     # Check for progressive growing first

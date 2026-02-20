@@ -1,0 +1,10 @@
+# TODO: Use dataset_name to determine paths of other fields
+dataset_path: /media/donceykong/doncey_ssd_02/datasets/MCD
+dataset_name: MCD  # "KITTI-360" or "CU-MULTI" or "MCD"
+infer_or_train: infer   # "train" or "infer"
+data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/data_cfg_mcd.yaml
+relative_infer_dir: "inferred_labels/cenet_mcd_EDL"
+
+inference:
+  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_style_EDL/cenet_mcd-512-EDL
+  split: test # "valid", "train", or "test"
