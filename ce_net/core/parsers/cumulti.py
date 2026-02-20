@@ -96,16 +96,16 @@ class CU_MULTI(Dataset):
             print(f"\n\nparsing env {self.environment}, robot {self.robot}\n\n")
 
             scan_path = os.path.join(self.root, self.environment, self.robot, "lidar_bin/data")
-            label_path = os.path.join(self.root, self.environment, self.robot, f"{self.robot}_{self.environment}_refined_lidar_labels")
+            label_path = os.path.join(self.root, self.environment, self.robot, f"{self.robot}_{self.environment}_lidar_labels")
             
-            # # Add sudo .bin labels to the label_path for every scan in the scan_path
-            # for scan in os.listdir(scan_path):
-            #     label_bin_path = os.path.join(label_path, os.path.basename(scan).replace(".bin", ".bin"))
-            #     # print(f"label_bin_path: {label_bin_path}")
-            #     # Create label_bin_path file with no content
-            #     with open(label_bin_path, 'w') as f:
-            #         pass
-            #     # print(f"scan: {scan}")
+            # Add sudo .bin labels to the label_path for every scan in the scan_path
+            for scan in os.listdir(scan_path):
+                label_bin_path = os.path.join(label_path, os.path.basename(scan).replace(".bin", ".bin"))
+                # print(f"label_bin_path: {label_bin_path}")
+                # Create label_bin_path file with no content
+                with open(label_bin_path, 'w') as f:
+                    pass
+                # print(f"scan: {scan}")
 
             label_files = [
                 os.path.join(dp, f)

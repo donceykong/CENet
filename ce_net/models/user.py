@@ -28,12 +28,13 @@ class User:
         if self.dataset_name == "CU-MULTI":
             self.environment = DATA["environment"]
             self.robot = DATA["test_robots"][0]
+            split_cfg = self.DATA.get("split") if isinstance(self.DATA.get("split"), dict) else {}
             self.parser = Parser(
                 root=self.dataset_path,
                 dataset_name = dataset_name,
-                train_sequences=self.DATA["split"]["train"],
-                valid_sequences=self.DATA["split"]["valid"],
-                test_sequences=self.DATA["split"]["test"],
+                train_sequences=split_cfg.get("train", []),
+                valid_sequences=split_cfg.get("valid", []),
+                test_sequences=split_cfg.get("test", []),
                 labels=self.DATA["labels"],
                 color_map=self.DATA["color_map"],
                 learning_map=self.DATA["learning_map"],
@@ -325,7 +326,8 @@ class User:
 
                 # save scan
                 if self.dataset_name == "CU-MULTI":
-                    label_dir = os.path.join(self.dataset_path, self.environment, self.robot, f"{self.robot}_{self.environment}_lidar_labels_confidence")
+                    relative_infer_dir = self.DATA.get("relative_infer_dir", "inferred_labels/cenet_mcd")
+                    label_dir = os.path.join(self.dataset_path, self.environment, self.robot, relative_infer_dir)
                     print(f"Saving scan to {label_dir}/{path_name}")    
                     path = os.path.join(label_dir, path_name)
                 elif self.dataset_name == "KITTI-360":
