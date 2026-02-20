@@ -199,6 +199,9 @@ learning_ignore: # Ignore classes
 
 environment: "main_campus"
 robots: ["robot1"]
+train_robots: ["robot1"]
+val_robots: ["robot1"]
+test_robots: ["robot1"]
 
 split: # sequence numbers
   test:   # For inference

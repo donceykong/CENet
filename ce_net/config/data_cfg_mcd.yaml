@@ -186,3 +186,10 @@ learning_ignore: # Ignore classes
 # For MCD Training
 sequences: ["kth_day_06", "kth_day_10", "kth_night_01", "kth_night_04"]
 split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
+
+# For CU-MULTI Inference
+environment: "main_campus"
+robots: ["robot1"]
+train_robots: ["robot1"]
+val_robots: ["robot1"]
+test_robots: ["robot1"]

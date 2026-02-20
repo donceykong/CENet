@@ -9,21 +9,13 @@ import open3d as o3d
 import yaml
 from tqdm import tqdm
 
-# Import dataset_binarize package to set up sys.path for lidar2osm imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Project root (repo root containing ce_net): two levels up from test_scripts/cumulti/
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _PROJECT_ROOT)
 from ce_net.utils.file_io import read_bin_file
 
-# MCD label config path (same as view_multiclass_semantics)
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CONFIG_PATH = os.path.join(_SCRIPT_DIR, "ce_net", "config", "data_cfg_mcd.yaml")
-
-# Body to LiDAR transformation matrix
-BODY_TO_LIDAR_TF = np.array([
-    [0.9999135040741837, -0.011166365511073898, -0.006949579221822984, -0.04894521120494695],
-    [-0.011356389542502144, -0.9995453006865824, -0.02793249526856565, -0.03126929060348084],
-    [-0.006634514801117132, 0.02800900135032654, -0.999585653686922, -0.01755515794222565],
-    [0.0, 0.0, 0.0, 1.0]
-])
+# MCD label config path relative to project root (same labels as cu-multi/CENet)
+DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "ce_net", "config", "data_cfg_mcd.yaml")
 
 def read_bin_file(file_path, dtype, shape=None):
     """
@@ -41,6 +33,52 @@ def read_bin_file(file_path, dtype, shape=None):
     if shape:
         return data.reshape(shape)
     return data
+
+
+def load_poses_utm(poses_file):
+    """
+    Load UTM poses from cu-multi CSV: timestamp, x, y, z, qx, qy, qz, qw.
+    Returns dict mapping timestamp -> [x, y, z, qx, qy, qz, qw].
+    """
+    try:
+        df = pd.read_csv(poses_file, comment="#")
+    except Exception as e:
+        print(f"Error reading poses CSV: {e}")
+        return {}
+    poses = {}
+    for _, row in df.iterrows():
+        try:
+            if "timestamp" in df.columns:
+                timestamp = row["timestamp"]
+                x, y, z = row["x"], row["y"], row["z"]
+                qx, qy, qz, qw = row["qx"], row["qy"], row["qz"], row["qw"]
+            elif len(row) >= 8:
+                timestamp = row.iloc[0]
+                x, y, z = row.iloc[1], row.iloc[2], row.iloc[3]
+                qx, qy, qz, qw = row.iloc[4], row.iloc[5], row.iloc[6], row.iloc[7]
+            else:
+                continue
+            poses[float(timestamp)] = [float(x), float(y), float(z), float(qx), float(qy), float(qz), float(qw)]
+        except Exception as e:
+            continue
+    return poses
+
+
+def transform_imu_to_lidar(poses):
+    """Transform poses from IMU frame to LiDAR frame (cu-multi)."""
+    IMU_TO_LIDAR_T = np.array([-0.058038, 0.015573, 0.049603])
+    IMU_TO_LIDAR_Q = [0.0, 0.0, 1.0, 0.0]
+    imu_to_lidar_rot = R.from_quat(IMU_TO_LIDAR_Q).as_matrix()
+    out = {}
+    for ts, pose in poses.items():
+        pos = np.array(pose[:3])
+        quat = pose[3:7]
+        imu_rot = R.from_quat(quat).as_matrix()
+        lidar_pos = pos + imu_rot @ IMU_TO_LIDAR_T
+        lidar_rot = imu_rot @ imu_to_lidar_rot
+        lidar_quat = R.from_matrix(lidar_rot).as_quat()
+        out[ts] = [*lidar_pos, *lidar_quat]
+    return out
 
 
 def load_label_config(config_path):
@@ -78,6 +116,42 @@ def map_class_indices_to_labels(class_indices, learning_map_inv):
         except IndexError:
             pass
     return lut[class_indices]
+
+
+# Viridis colormap (standard key points, interpolated to 256 entries): dark purple/blue -> green -> yellow
+_VIRIDIS_KEY = np.array([
+    [0.267004, 0.004874, 0.329415],
+    [0.282327, 0.140926, 0.457517],
+    [0.127568, 0.566949, 0.550556],
+    [0.369214, 0.788888, 0.383287],
+    [0.993248, 0.906157, 0.143936],
+], dtype=np.float32)
+_VIRIDIS_LUT = np.zeros((256, 3), dtype=np.float32)
+for i in range(256):
+    t = i / 255.0
+    idx = t * 4  # 4 segments between 5 key points
+    j = int(np.clip(np.floor(idx), 0, 3))
+    u = idx - j
+    _VIRIDIS_LUT[i] = (1 - u) * _VIRIDIS_KEY[j] + u * _VIRIDIS_KEY[j + 1]
+
+
+def scalar_to_viridis_rgb(values, normalize_range=True):
+    """
+    Map scalar values to RGB using the Viridis colormap (dark = low, yellow = high).
+    values: (N,) array. If normalize_range=True, map [min, max] to [0, 1] before lookup.
+    Returns (N, 3) RGB in [0, 1].
+    """
+    v = np.asarray(values, dtype=np.float32).reshape(-1)
+    if normalize_range:
+        vmin, vmax = np.min(v), np.max(v)
+        rng = vmax - vmin
+        if rng <= 0:
+            rng = 1.0
+        v = (v - vmin) / rng
+    v = np.clip(v, 0.0, 1.0)
+    idx = (v * 255).astype(np.int32)
+    idx = np.clip(idx, 0, 255)
+    return _VIRIDIS_LUT[idx].copy()
 
 
 def _apply_value_curve(t, value_floor=0.0, gamma=1.0):
@@ -419,194 +493,141 @@ def transform_points_to_world(points_xyz, position, quaternion, body_to_lidar_tf
     return world_points_xyz
 
 
-def plot_map(dataset_path, seq_name, label_config, single_label_id=None,
+def plot_map(dataset_path, environment, robots, label_config, single_label_id=None,
              max_scans=None, downsample_factor=1, voxel_size=0.1, max_distance=None,
              single_label_normalize_range=True, value_floor=0.12, gamma=0.65,
-             single_label_grayscale=False):
+             single_label_grayscale=False, view_variance=False):
     """
-    Load lidar bin files with multiclass confidence scores, transform using poses, and visualize with Open3D.
-    Uses only multiclass_confidence_scores (float16 [N, C]); no single-channel label files.
-    
-    Args:
-        dataset_path: Path to dataset directory
-        seq_name: Name of the sequence
-        label_config: Dict from load_label_config() (labels, color_map_rgb, learning_map_inv)
-        single_label_id: If set, visualize one label's confidence. Else argmax colors.
-        single_label_normalize_range: If True, map single-label confidence range to [0,1] for visibility.
-        value_floor: Minimum brightness (0..1). Avoids pure black.
-        gamma: Gamma for mid-tone contrast (<1 brightens mid-tones).
+    Cu-multi: Load lidar + multiclass confidence from dataset_path/environment/robot.
+    Labels under robot/inferred_labels/cenet_mcd/multiclass_confidence_scores.
+    Poses: UTM CSV per robot, transformed IMU->LiDAR. No body-to-lidar matrix.
     """
-    root_path = os.path.join(dataset_path, seq_name)
-    data_dir = os.path.join(root_path, "lidar_bin/data")
-    timestamps_file = os.path.join(root_path, "lidar_bin/timestamps.txt")
-    poses_file = os.path.join(root_path, "pose_inW.csv")
-    multiclass_dir = os.path.join(root_path, "inferred_labels", "cenet_mcd", "multiclass_confidence_scores")
-
+    from pathlib import Path
     learning_map_inv = label_config["learning_map_inv"]
     label_id_to_color = label_config["color_map_rgb"]
-
-    # Check if files exist
-    if not os.path.exists(data_dir):
-        print(f"ERROR: Data directory not found: {data_dir}")
-        return
-    
-    if not os.path.exists(timestamps_file):
-        print(f"ERROR: Timestamps file not found: {timestamps_file}")
-        return
-    
-    if not os.path.exists(poses_file):
-        print(f"ERROR: Poses file not found: {poses_file}")
-        return
-    
-    if not os.path.exists(multiclass_dir):
-        print(f"ERROR: Multiclass labels directory not found: {multiclass_dir}")
-        return
-    
-    # Load timestamps
-    print(f"\nLoading timestamps from {timestamps_file}")
-    timestamps = np.loadtxt(timestamps_file)
-    print(f"Loaded {len(timestamps)} timestamps")
-    
-    # Load poses
-    poses_dict, index_to_timestamp = load_poses(poses_file)
-    if not poses_dict:
-        print("ERROR: No poses loaded")
-        return
-    
-    if not index_to_timestamp:
-        print("ERROR: No index column found in poses CSV. Cannot validate index matching.")
-        return
-    
-    # Process poses in order by their index (num value)
-    sorted_pose_indices = sorted(index_to_timestamp.keys())
-    
-    # Apply downsampling to pose indices (process every Nth pose)
-    if downsample_factor > 1:
-        sorted_pose_indices = sorted_pose_indices[::downsample_factor]
-        print(f"Downsampling: Processing every {downsample_factor} pose (total: {len(sorted_pose_indices)} poses)")
-    
-    # Limit number of poses if specified
-    if max_scans:
-        sorted_pose_indices = sorted_pose_indices[:max_scans]
-        print(f"Limiting to {max_scans} poses")
-    
-    print(f"Processing {len(sorted_pose_indices)} scans...")
-    
-    if max_distance is not None:
-        print(f"Filtering points beyond {max_distance}m from each pose position")
-    
-    # Accumulate all points and colors
     all_world_points = []
     all_colors = []
-    
-    # Process poses with progress bar
-    for pose_num in tqdm(sorted_pose_indices, desc="Processing scans", unit="scan"):
-        # Get pose data
-        pose_timestamp = index_to_timestamp[pose_num]
-        pose_data = poses_dict[pose_timestamp]
-        position = pose_data[1:4]  # [x, y, z]
-        quaternion = pose_data[4:8]  # [qx, qy, qz, qw]
-        
-        # Construct bin file name directly from pose_num (1-indexed)
-        # Bin files are named 0000000001.bin, 0000000002.bin, etc.
-        bin_file = f"{pose_num:010d}.bin"
-        bin_path = os.path.join(data_dir, bin_file)
-        
-        # Check if bin file exists
-        if not os.path.exists(bin_path):
-            tqdm.write(f"  WARNING: Bin file not found for pose {pose_num}: {bin_file}")
+
+    for robot in robots:
+        root = Path(dataset_path) / environment / robot
+        data_dir = root / "lidar_bin" / "data"
+        poses_file = root / f"{robot}_{environment}_gt_utm_poses.csv"
+        multiclass_dir = root / "inferred_labels" / "cenet_mcd" / "multiclass_confidence_scores"
+
+        if not data_dir.exists():
+            print(f"ERROR: Data directory not found: {data_dir}")
             continue
-        
-        # Get corresponding timestamp (pose_num is 1-indexed, timestamps array is 0-indexed)
-        scan_timestamp = timestamps[pose_num - 1]
-        
-        # Validate timestamps match (within threshold)
-        time_diff = abs(scan_timestamp - pose_timestamp)
-        if time_diff > 0.1:  # 100ms threshold
-            raise ValueError(
-                f"Timestamp mismatch at timestamp index {pose_num - 1} (pose index {pose_num}): "
-                f"Scan timestamp is {scan_timestamp:.6f} but pose timestamp is {pose_timestamp:.6f} "
-                f"(difference: {time_diff:.6f}s)"
-            )
-        
-        # Load point cloud (bin_path already constructed above)
-        try:
-            points = read_bin_file(bin_path, dtype=np.float32, shape=(-1, 4))
-            points_xyz = points[:, :3]
-        except Exception as e:
-            tqdm.write(f"  Error loading {bin_file}: {e}")
+        if not poses_file.exists():
+            print(f"ERROR: Poses file not found: {poses_file}")
             continue
-        
-        # Load multiclass confidence scores (float16, shape [n_points * n_classes])
-        multiclass_path = os.path.join(multiclass_dir, bin_file)
-        if not os.path.exists(multiclass_path):
-            tqdm.write(f"  WARNING: Multiclass file not found: {bin_file}, skipping scan")
+        if not multiclass_dir.exists():
+            print(f"ERROR: Multiclass labels not found: {multiclass_dir}")
             continue
-        
-        try:
-            raw_probs = read_bin_file(multiclass_path, dtype=np.float16)
-            n_points = len(points_xyz)
-            n_classes = len(raw_probs) // n_points
-            if len(raw_probs) != n_points * n_classes:
-                tqdm.write(f"  WARNING: Multiclass size {len(raw_probs)} != {n_points} * n_classes for {bin_file}, skipping")
+
+        poses = load_poses_utm(str(poses_file))
+        if not poses:
+            print(f"ERROR: No poses loaded for {robot}")
+            continue
+        poses = transform_imu_to_lidar(poses)
+        timestamps = sorted(poses.keys())
+        velodyne_files = sorted(data_dir.glob("*.bin"))
+        if not velodyne_files:
+            print(f"WARNING: No .bin files in {data_dir}")
+            continue
+        total = min(len(velodyne_files), len(timestamps))
+        indices = list(range(total))
+        if downsample_factor > 1:
+            indices = indices[::downsample_factor]
+        if max_scans:
+            indices = indices[:max_scans]
+        print(f"Robot {robot}: processing {len(indices)} scans (of {total})")
+
+        for idx in tqdm(indices, desc=robot, unit="scan"):
+            bin_path = velodyne_files[idx]
+            bin_file = bin_path.name
+            ts = timestamps[idx]
+            pose_data = poses[ts]
+            position = np.array(pose_data[:3])
+            quaternion = pose_data[3:7]
+
+            try:
+                points = read_bin_file(str(bin_path), dtype=np.float32, shape=(-1, 4))
+                points_xyz = points[:, :3]
+            except Exception as e:
+                tqdm.write(f"  Error loading {bin_file}: {e}")
                 continue
-            multiclass_probs = raw_probs.reshape(n_points, n_classes)
-            
-            if single_label_id is not None:
-                label_id_to_class_idx = get_label_id_to_class_index(learning_map_inv)
-                if single_label_id not in label_id_to_class_idx:
-                    tqdm.write(f"  WARNING: No class index for label id {single_label_id}, skipping scan")
+
+            multiclass_path = multiclass_dir / bin_file
+            if not multiclass_path.exists():
+                tqdm.write(f"  WARNING: Multiclass file not found: {bin_file}")
+                continue
+
+            try:
+                raw_probs = read_bin_file(str(multiclass_path), dtype=np.float16)
+                n_points = len(points_xyz)
+                n_classes = len(raw_probs) // n_points
+                if len(raw_probs) != n_points * n_classes:
+                    tqdm.write(f"  WARNING: Multiclass size {len(raw_probs)} != {n_points} * n_classes for {bin_file}, skipping")
                     continue
-                class_idx = label_id_to_class_idx[single_label_id]
-                confidences = np.asarray(multiclass_probs[:, class_idx], dtype=np.float32)
-                colors = single_label_confidence_to_colors(
-                    confidences, single_label_id, label_id_to_color,
-                    normalize_range=single_label_normalize_range,
-                    value_floor=value_floor, gamma=gamma,
-                    grayscale=single_label_grayscale,
-                )
-            else:
-                class_indices = np.argmax(multiclass_probs, axis=1)
-                confidences = np.max(multiclass_probs, axis=1)
-                semantic_label_ids = map_class_indices_to_labels(class_indices, learning_map_inv)
-                colors = labels_to_colors(
-                    semantic_label_ids, label_id_to_color, confidences=confidences,
-                    value_floor=value_floor, gamma=gamma,
-                )
-        except Exception as e:
-            tqdm.write(f"  Error loading multiclass from {bin_file}: {e}")
-            continue
-        
-        # Transform to world coordinates (apply body-to-lidar transformation)
-        world_points = transform_points_to_world(points_xyz, position, quaternion, BODY_TO_LIDAR_TF)
-        
-        # Filter points by distance from pose position if max_distance is specified
-        if max_distance is not None and max_distance > 0:
-            # Calculate distance from pose position for each point
-            distances = np.linalg.norm(world_points - position, axis=1)
-            # Keep points within max_distance
-            mask = distances <= max_distance
-            world_points = world_points[mask]
-            colors = colors[mask]
-            
-            if len(world_points) == 0:
-                tqdm.write(f"  WARNING: All points filtered out for {bin_file} (max_distance={max_distance}m)")
+                multiclass_probs = raw_probs.reshape(n_points, n_classes)
+
+                if view_variance:
+                    # Variance: high = one-hot (confident), low = uniform (uncertain). Invert so uncertain -> yellow.
+                    variances = np.var(multiclass_probs.astype(np.float32), axis=1)
+                    max_var = (n_classes - 1) / (n_classes ** 2) if n_classes > 1 else 1.0
+                    scaled = np.clip(variances / max_var, 0.0, 1.0)
+                    uncertainty = 1.0 - scaled  # 1 = uncertain (uniform), 0 = confident (one-hot)
+                    colors = scalar_to_viridis_rgb(uncertainty, normalize_range=False)
+                elif single_label_id is not None:
+                    label_id_to_class_idx = get_label_id_to_class_index(learning_map_inv)
+                    if single_label_id not in label_id_to_class_idx:
+                        tqdm.write(f"  WARNING: No class index for label id {single_label_id}, skipping scan")
+                        continue
+                    class_idx = label_id_to_class_idx[single_label_id]
+                    confidences = np.asarray(multiclass_probs[:, class_idx], dtype=np.float32)
+                    colors = single_label_confidence_to_colors(
+                        confidences, single_label_id, label_id_to_color,
+                        normalize_range=single_label_normalize_range,
+                        value_floor=value_floor, gamma=gamma,
+                        grayscale=single_label_grayscale,
+                    )
+                else:
+                    class_indices = np.argmax(multiclass_probs, axis=1)
+                    confidences = np.max(multiclass_probs, axis=1)
+                    semantic_label_ids = map_class_indices_to_labels(class_indices, learning_map_inv)
+                    colors = labels_to_colors(
+                        semantic_label_ids, label_id_to_color, confidences=confidences,
+                        value_floor=value_floor, gamma=gamma,
+                    )
+            except Exception as e:
+                tqdm.write(f"  Error loading multiclass from {bin_file}: {e}")
                 continue
-        
-        # Voxel downsample this scan before accumulating
-        if voxel_size is not None and voxel_size > 0:
-            scan_pcd = o3d.geometry.PointCloud()
-            scan_pcd.points = o3d.utility.Vector3dVector(world_points)
-            scan_pcd.colors = o3d.utility.Vector3dVector(colors)
-            scan_pcd = scan_pcd.voxel_down_sample(voxel_size=voxel_size)
-            
-            # Extract downsampled points and colors
-            world_points = np.asarray(scan_pcd.points)
-            colors = np.asarray(scan_pcd.colors)
-        
-        all_world_points.append(world_points)
-        all_colors.append(colors)
-    
+
+            # Transform to world coordinates (poses already in LiDAR frame after transform_imu_to_lidar)
+            world_points = transform_points_to_world(points_xyz, position, quaternion, body_to_lidar_tf=None)
+
+            # Filter points by distance from pose position if max_distance is specified
+            if max_distance is not None and max_distance > 0:
+                distances = np.linalg.norm(world_points - position, axis=1)
+                mask = distances <= max_distance
+                world_points = world_points[mask]
+                colors = colors[mask]
+                if len(world_points) == 0:
+                    tqdm.write(f"  WARNING: All points filtered out for {bin_file} (max_distance={max_distance}m)")
+                    continue
+
+            # Voxel downsample this scan before accumulating
+            if voxel_size is not None and voxel_size > 0:
+                scan_pcd = o3d.geometry.PointCloud()
+                scan_pcd.points = o3d.utility.Vector3dVector(world_points)
+                scan_pcd.colors = o3d.utility.Vector3dVector(colors)
+                scan_pcd = scan_pcd.voxel_down_sample(voxel_size=voxel_size)
+                world_points = np.asarray(scan_pcd.points)
+                colors = np.asarray(scan_pcd.colors)
+
+            all_world_points.append(world_points)
+            all_colors.append(colors)
+
     if not all_world_points:
         print("ERROR: No points accumulated")
         return
@@ -631,7 +652,7 @@ def plot_map(dataset_path, seq_name, label_config, single_label_id=None,
     print("  - Mouse wheel: Zoom")
     print("  - Q or ESC: Quit")
     
-    if single_label_grayscale:
+    if single_label_grayscale or view_variance:
         vis = o3d.visualization.Visualizer()
         vis.create_window()
         vis.add_geometry(pcd)
@@ -645,11 +666,12 @@ def plot_map(dataset_path, seq_name, label_config, single_label_id=None,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description="Visualize accumulated map from lidar + multiclass confidence scores. "
-                    "Optionally show single-label confidence (--single-label)."
+        description="Cu-multi: Visualize accumulated map from lidar + multiclass confidence. "
+                    "Specify dataset_path, environment, and robots (as in create_global_sem_map)."
     )
-    parser.add_argument("--dataset-path", type=str, default="/media/donceykong/doncey_ssd_02/datasets/MCD")
-    parser.add_argument("--seq", type=str, nargs="+", default=["kth_day_09"], help="Sequence name(s)")
+    parser.add_argument("--dataset-path", type=str, default="/media/donceykong/donceys_data_ssd/datasets/CU_MULTI/data", help="Path to cu-multi dataset root")
+    parser.add_argument("--environment", type=str, default="main_campus", help="Environment name")
+    parser.add_argument("--robots", type=str, nargs="+", default=["robot1"], help="Robot name(s)")
     parser.add_argument(
         "--single-label",
         type=str,
@@ -657,15 +679,16 @@ if __name__ == '__main__':
         metavar="NAME_OR_ID",
         help="View confidence for one label only (e.g. vehicle-static or 28). Full color = high, black = zero.",
     )
-    parser.add_argument("--max-scans", type=int, default=5000, help="Max scans to process (0 or None for all)")
+    parser.add_argument("--max-scans", type=int, default=100, help="Max scans to process (0 or None for all)")
     parser.add_argument("--downsample-factor", type=int, default=200, help="Process every Nth scan")
-    parser.add_argument("--voxel-size", type=float, default=2.0, help="Voxel size in meters")
+    parser.add_argument("--voxel-size", type=float, default=0.5, help="Voxel size in meters")
     parser.add_argument("--max-distance", type=float, default=100.0, help="Max distance from pose to keep points (m)")
     parser.add_argument("--config", type=str, default=None, help="Path to MCD label config YAML (default: ce_net/config/data_cfg_mcd.yaml)")
     parser.add_argument("--no-normalize", action="store_true", help="Single-label: use raw probability (0=black, 1=full) instead of normalizing range")
     parser.add_argument("--value-floor", type=float, default=0.12, metavar="F", help="Minimum brightness 0..1 (default 0.12); with --grayscale points use 0 (white to black)")
     parser.add_argument("--gamma", type=float, default=0.65, metavar="G", help="Gamma for mid-tone contrast (default 0.65; <1 brightens mid-tones)")
     parser.add_argument("--grayscale", action="store_true", help="Single-label: points white (high) to black (low); scene background gray")
+    parser.add_argument("--variance", action="store_true", help="View variance of class probabilities (Viridis: dark=low var, yellow=high var); gray background")
     args = parser.parse_args()
 
     config_path = args.config or DEFAULT_CONFIG_PATH
@@ -688,20 +711,20 @@ if __name__ == '__main__':
         value_floor = 0.0
 
     max_scans = args.max_scans if args.max_scans else None
-    seq_names = args.seq
 
-    for seq_name in seq_names:
-        plot_map(
-            args.dataset_path,
-            seq_name,
-            label_config,
-            single_label_id=single_label_id,
-            max_scans=max_scans,
-            downsample_factor=args.downsample_factor,
-            voxel_size=args.voxel_size,
-            max_distance=args.max_distance,
-            single_label_normalize_range=not args.no_normalize,
-            value_floor=value_floor,
-            gamma=args.gamma,
-            single_label_grayscale=args.grayscale,
-        )
+    plot_map(
+        args.dataset_path,
+        args.environment,
+        args.robots,
+        label_config,
+        single_label_id=single_label_id,
+        max_scans=max_scans,
+        downsample_factor=args.downsample_factor,
+        voxel_size=args.voxel_size,
+        max_distance=args.max_distance,
+        single_label_normalize_range=not args.no_normalize,
+        value_floor=value_floor,
+        gamma=args.gamma,
+        single_label_grayscale=args.grayscale,
+        view_variance=args.variance,
+    )
