@@ -22,7 +22,7 @@ def load_yaml(config_path):
 
 if __name__ == "__main__":
     # Default configuration path
-    config = load_yaml(CONFIG_DIR / "inference_cumulti.yaml")
+    config = load_yaml(CONFIG_DIR / "inference_mcd.yaml")
 
     # Setup command line arguments
     splits = ["train", "valid", "test"]
