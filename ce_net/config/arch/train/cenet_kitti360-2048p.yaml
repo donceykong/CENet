@@ -53,14 +53,14 @@ post:
 # dataset (to find parser)
 ################################################################################
 dataset:
-  labels: "kitti"
-  scans: "kitti"
+  labels: "kitti360"
+  scans: "kitti360"
   max_points: 150000 # max of any scan in dataset
   sensor:
-    name: "ouster64"
+    name: "velodyne64"
     type: "spherical" # projective
-    fov_up: 30.5
-    fov_down: -22.5
+    fov_up: 2.0
+    fov_down: -24.8
     img_prop:
       width: 2048
       height: 64

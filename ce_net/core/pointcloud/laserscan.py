@@ -535,7 +535,9 @@ class SemLaserScan(LaserScan):
 
     def colorize(self):
         """Colorize pointcloud with the color of each semantic label"""
-        self.sem_label_color = self.sem_color_lut[self.sem_label]
+        # clip label indices to LUT range (e.g. 65535 from uint16 unlabeled)
+        sem_idx = np.clip(self.sem_label, 0, len(self.sem_color_lut) - 1)
+        self.sem_label_color = self.sem_color_lut[sem_idx]
         self.sem_label_color = self.sem_label_color.reshape((-1, 3))
 
         # self.inst_label_color = self.inst_color_lut[self.inst_label]
@@ -545,11 +547,12 @@ class SemLaserScan(LaserScan):
         # only map colors to labels that exist
         mask = self.proj_idx >= 0
 
-        # semantics
-        self.proj_sem_label[mask] = self.sem_label[self.proj_idx[mask]]
-        self.proj_sem_color[mask] = self.sem_color_lut[
-            self.sem_label[self.proj_idx[mask]]
-        ]
+        # semantics (clip label indices to LUT range, e.g. 65535 from uint16 unlabeled)
+        sem_idx = self.proj_idx[mask]
+        labels = self.sem_label[sem_idx]
+        labels_clipped = np.clip(labels, 0, len(self.sem_color_lut) - 1)
+        self.proj_sem_label[mask] = labels
+        self.proj_sem_color[mask] = self.sem_color_lut[labels_clipped]
 
         # # instances
         # self.proj_inst_label[mask] = self.inst_label[self.proj_idx[mask]]

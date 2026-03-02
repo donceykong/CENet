@@ -52,6 +52,22 @@ post:
 ################################################################################
 # dataset (to find parser)
 ################################################################################
+# dataset:
+#   labels: "kitti360"
+#   scans: "kitti360"
+#   max_points: 150000 # max of any scan in dataset
+#   sensor:
+#     name: "velodyne64"
+#     type: "spherical" # projective
+#     fov_up: 2.0
+#     fov_down: -24.8
+#     img_prop:
+#       width: 512
+#       height: 64
+
+################################################################################
+# dataset (to find parser)
+################################################################################
 dataset:
   labels: "mcd"
   scans: "mcd"

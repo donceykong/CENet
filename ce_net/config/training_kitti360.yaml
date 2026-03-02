@@ -1,6 +1,6 @@
 # TODO: Use dataset_name to determine paths of other fields
 dataset_path: /media/donceykong/doncey_ssd_02/datasets/KITTI360
-dataset_name: KITTI360    # "KITTI-360", "CU-MULTI", or "MCD"
+dataset_name: KITTI-360   # must match parser/trainer; "CU-MULTI", "MCD"
 infer_or_train: train     # "train" or "infer"
 data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/data_cfg_kitti360.yaml
 

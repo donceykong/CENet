@@ -46,6 +46,7 @@ labels:
   42: "unknown construction"
   43: "unknown vehicle"
   44: "unknown object"
+  65535: "invalid (unlabeled 0xFFFF)"  # KITTI-360 convention; map to unlabeled
 color_map: # bgr
   0: [0, 0, 0]
   1: [0, 0, 0]
@@ -92,6 +93,7 @@ color_map: # bgr
   42: [102, 0, 0]
   43: [51, 0, 51]
   44: [32, 32, 32]
+  65535: [0, 0, 0]  # same as unlabeled
 content: # as a ratio with the total number of points
   0: 0.06965224
   1: 0.00000000
@@ -138,6 +140,7 @@ content: # as a ratio with the total number of points
   42: 0.00028965
   43: 0.00011704
   44: 0.00062487
+  65535: 0.0  # invalid/unlabeled; mapped to class 0
 # classes that are indistinguishable from single scan or inconsistent in
 # ground truth are mapped to their closest equivalent
 learning_map:
@@ -186,6 +189,7 @@ learning_map:
   42: 42    # "unknown construction" mapped to itself
   43: 43    # "unknown vehicle" mapped to itself
   44: 44    # "unknown object" mapped to itself
+  65535: 0   # invalid (0xFFFF) -> unlabeled
 learning_map_inv: # inverse of previous map
   0: 0      # "unlabeled" mapped to itself
   1: 1      # "ego vehicle" mapped to itself
@@ -233,7 +237,7 @@ learning_map_inv: # inverse of previous map
   43: 43    # "unknown vehicle" mapped to itself
   44: 44    # "unknown object" mapped to itself
 learning_ignore: # Ignore classes
-  0: False
+  0: True
   1: False
   2: False
   3: False
@@ -280,10 +284,14 @@ learning_ignore: # Ignore classes
   44: False
 
 
-# For KITTI-360 inference/train
-sequences: ["2013_05_28_drive_0002_sync", "2013_05_28_drive_0003_sync", "2013_05_28_drive_0004_sync", "2013_05_28_drive_0005_sync", "2013_05_28_drive_0006_sync", "2013_05_28_drive_0007_sync", "2013_05_28_drive_0010_sync"]
-split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
+# # For KITTI-360 inference/train
+# sequences: ["2013_05_28_drive_0002_sync", "2013_05_28_drive_0003_sync", "2013_05_28_drive_0004_sync", "2013_05_28_drive_0005_sync", "2013_05_28_drive_0006_sync", "2013_05_28_drive_0007_sync", "2013_05_28_drive_0010_sync"]
+# # sequences: ["2013_05_28_drive_0000_sync", "2013_05_28_drive_0009_sync"]
+# split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
 
+# For MCD Training
+sequences: ["kth_day_09", "kth_night_05"]
+split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
 
 # For CU-Multi
 environment: "main_campus"

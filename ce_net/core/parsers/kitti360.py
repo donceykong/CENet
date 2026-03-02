@@ -28,6 +28,78 @@ def is_label(filename):
     return any(filename.endswith(ext) for ext in EXTENSIONS_LABEL)
 
 
+def get_kitti360_split_from_sequences_and_ratios(root, sequences, split_ratios, seed=1024):
+    """
+    Collect all scan/label file pairs from the given sequences under root,
+    shuffle with seed, and split into train/valid/test by split_ratios.
+    Same pattern as get_mcd_split_from_sequences_and_ratios for MCD.
+
+    Args:
+        root: dataset root (e.g. /path/to/KITTI360)
+        sequences: list of sequence dir names (e.g. ["2013_05_28_drive_0002_sync", ...])
+        split_ratios: [train_ratio, valid_ratio, test_ratio], e.g. [0.8, 0.1, 0.1]
+
+    Returns:
+        dict with keys "train", "valid", "test". Each value is
+        (list of scan paths, list of label paths).
+    """
+    train_r, valid_r, test_r = split_ratios[0], split_ratios[1], split_ratios[2]
+    scan_files = []
+    label_files = []
+    for seq in sequences:
+        if isinstance(seq, str) and "drive" in seq:
+            seq_dir = seq
+        else:
+            seq_dir = f"2013_05_28_drive_{int(seq):04d}_sync"
+        scan_path = os.path.join(root, seq_dir, "velodyne_points", "data")
+        label_path = os.path.join(root, seq_dir, "gt_labels")
+        if not os.path.isdir(label_path) or not os.path.isdir(scan_path):
+            continue
+        label_list = [
+            os.path.join(label_path, f)
+            for f in os.listdir(label_path)
+            if is_label(f)
+        ]
+        label_bases = {os.path.splitext(os.path.basename(f))[0] for f in label_list}
+        for f in os.listdir(scan_path):
+            if not is_scan(f):
+                continue
+            base = os.path.splitext(f)[0]
+            if base not in label_bases:
+                continue
+            scan_files.append(os.path.join(scan_path, f))
+            label_files.append(os.path.join(label_path, f))
+    pairs = list(zip(scan_files, label_files))
+    pairs.sort(key=lambda x: x[0])
+    scan_files = [p[0] for p in pairs]
+    label_files = [p[1] for p in pairs]
+    n = len(scan_files)
+    if n == 0:
+        return {"train": ([], []), "valid": ([], []), "test": ([], [])}
+    indices = list(range(n))
+    random.seed(seed)
+    random.shuffle(indices)
+    n_train = int(round(n * train_r))
+    n_valid = int(round(n * valid_r))
+    n_test = n - n_train - n_valid
+    if n_test < 0:
+        n_test = 0
+        n_valid = n - n_train
+    i1 = n_train
+    i2 = n_train + n_valid
+    train_scans = [scan_files[i] for i in indices[:i1]]
+    train_labels = [label_files[i] for i in indices[:i1]]
+    valid_scans = [scan_files[i] for i in indices[i1:i2]]
+    valid_labels = [label_files[i] for i in indices[i1:i2]]
+    test_scans = [scan_files[i] for i in indices[i2:]]
+    test_labels = [label_files[i] for i in indices[i2:]]
+    return {
+        "train": (train_scans, train_labels),
+        "valid": (valid_scans, valid_labels),
+        "test": (test_scans, test_labels),
+    }
+
+
 # def my_collate(batch):
 #     data = [item[0] for item in batch]
 #     project_mask = [item[1] for item in batch]
@@ -114,71 +186,91 @@ class KITTI_360(Dataset):
         # make sure learning_map is a dict
         assert isinstance(self.learning_map, dict)
 
-        # make sure sequences is a list
-        assert isinstance(self.sequences, list)
-
         # placeholder for filenames
         self.scan_files = []
         self.label_files = []
 
-        # fill in with names, checking that all sequences are complete
+        # Option A: sequences is (scan_files, label_files) from split-by-ratio (like MCD)
+        if isinstance(self.sequences, (list, tuple)) and len(self.sequences) == 2:
+            scan_list, label_list = self.sequences[0], self.sequences[1]
+            if isinstance(scan_list, list) and isinstance(label_list, list) and len(scan_list) == len(label_list):
+                self.scan_files = list(scan_list)
+                self.label_files = list(label_list)
+                # keep scan/label aligned (sort by scan path)
+                pairs = list(zip(self.scan_files, self.label_files))
+                pairs.sort(key=lambda x: x[0])
+                self.scan_files = [p[0] for p in pairs]
+                self.label_files = [p[1] for p in pairs]
+                print(f"KITTI_360: using {len(self.scan_files)} scan/label pairs from split.")
+                return
+
+        # make sure sequences is a list (of sequence names/indices)
+        assert isinstance(self.sequences, list), "sequences must be list of seq names or (scan_files, label_files)"
+
+        # Option B: fill in from sequence dirs
+        # sequences can be list of int (indices) or list of str (dir names e.g. "2013_05_28_drive_0009_sync")
         for seq in self.sequences:
-            # to string
-            seq = f"2013_05_28_drive_{seq:04d}_sync"
+            if isinstance(seq, str) and "drive" in seq:
+                seq_dir = seq
+            else:
+                seq_dir = f"2013_05_28_drive_{int(seq):04d}_sync"
 
-            print(f"parsing seq {seq}")
+            print(f"parsing seq {seq_dir}")
 
-            # get paths for each
-            scan_path = os.path.join(
-                self.root,
-                "data_3d_raw",
-                seq,
-                "velodyne_points/data",
-            )
-            # label_path = os.path.join(
-            #     self.root, "data_3d_semantics", seq, "labels_int32"
-            # )
+            # Scan path: root/<seq_dir>/velodyne_points/data (single layout)
+            scan_path = os.path.join(self.root, seq_dir, "velodyne_points", "data")
+            if not os.path.isdir(scan_path):
+                raise FileNotFoundError(
+                    f"Velodyne scan dir not found: {scan_path}. "
+                    f"Set dataset_path (e.g. /media/.../KITTI360) so that dataset_path/{seq_dir}/velodyne_points/data exists."
+                )
 
-            # orig_label_path = os.path.join(self.root, "data_3d_semantics", seq, "labels")
-            # orig_label_files = [
-            #     os.path.join(dp, f)
-            #     for dp, dn, fn in os.walk(os.path.expanduser(orig_label_path))
-            #     for f in fn
-            #     if is_label(f)
-            # ]
-
-            # orig_label_bases = set(
-            #     os.path.splitext(os.path.basename(f))[0] for f in orig_label_files
-            # )
-
-            osm_label_path = os.path.join(self.root, "data_3d_semantics", seq, "osm_labels")
-            osm_label_files = [
-                os.path.join(dp, f)
-                for dp, dn, fn in os.walk(os.path.expanduser(osm_label_path))
-                for f in fn
-                if is_label(f)
-            ]
-            osm_label_bases = set(
-                os.path.splitext(os.path.basename(f))[0] for f in osm_label_files
-            )
-
-            # Filter scan files to include only those with a corresponding label file
-            scan_files = [
-                os.path.join(dp, f)
-                for dp, dn, fn in os.walk(os.path.expanduser(scan_path))
-                for f in fn
-                if is_scan(f)
-                and os.path.splitext(os.path.basename(f))[0] in osm_label_bases
-            ]
-
-            print(f"\n\nlen(scan_files): {len(scan_files)}, len(label_files): {len(osm_label_files)}")
-            # # check all scans have labels
             if self.gt:
-                assert len(scan_files) == len(osm_label_files)
+                gt_label_path = os.path.join(self.root, seq_dir, "gt_labels")
+                if not os.path.isdir(gt_label_path):
+                    raise FileNotFoundError(
+                        f"GT label dir not found: {gt_label_path}. "
+                        f"Expect dataset_path/{seq_dir}/gt_labels with .bin label files."
+                    )
+                gt_label_files = [
+                    os.path.join(dp, f)
+                    for dp, dn, fn in os.walk(os.path.expanduser(gt_label_path))
+                    for f in fn
+                    if is_label(f)
+                ]
+                gt_label_bases = set(
+                    os.path.splitext(os.path.basename(f))[0] for f in gt_label_files
+                )
+                scan_files = [
+                    os.path.join(dp, f)
+                    for dp, dn, fn in os.walk(os.path.expanduser(scan_path))
+                    for f in fn
+                    if is_scan(f)
+                    and os.path.splitext(os.path.basename(f))[0] in gt_label_bases
+                ]
+                assert len(scan_files) == len(gt_label_files)
+                self.label_files.extend(gt_label_files)
+            else:
+                # Inference: use all scans in velodyne dir (no label filter)
+                scan_files = [
+                    os.path.join(dp, f)
+                    for dp, dn, fn in os.walk(os.path.expanduser(scan_path))
+                    for f in fn
+                    if is_scan(f)
+                ]
+                scan_files.sort()
+                if not scan_files:
+                    raise FileNotFoundError(
+                        f"No .bin files in {scan_path}. Check dataset_path (root={self.root}) and that the sequence has scans."
+                    )
+
+            if self.gt:
+                print(f"\n\nlen(scan_files): {len(scan_files)}, len(label_files): {len(gt_label_files)}")
+            else:
+                print(f"\n\nlen(scan_files): {len(scan_files)} (inference)")
 
             # extend list
             self.scan_files.extend(scan_files)
-            self.label_files.extend(osm_label_files)
 
         # sort for correspondance
         self.scan_files.sort()

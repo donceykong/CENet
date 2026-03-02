@@ -256,6 +256,21 @@ class Parser:
                         gt=False,
                     )
 
+            elif self.dataset_name == "KITTI-360":
+                if self.test_sequences is not None and len(self.test_sequences) > 0:
+                    self.test_dataset = KITTI_360(
+                        root=self.root,
+                        sequences=self.test_sequences,
+                        labels=self.labels,
+                        color_map=self.color_map,
+                        learning_map=self.learning_map,
+                        learning_map_inv=self.learning_map_inv,
+                        sensor=self.sensor,
+                        max_points=max_points,
+                        gt=False,
+                        transform=False,
+                    )
+
             elif self.dataset_name == "MCD":
                 if self.test_sequences and isinstance(self.test_sequences, (list, tuple)) and isinstance(self.test_sequences[0], str):
                     # Infer on all scans in each sequence (no split)

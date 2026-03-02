@@ -67,6 +67,7 @@ class Trainer:
         # get the data
         from ce_net.core.parsers.parser import Parser
         from ce_net.core.parsers.mcd import get_mcd_split_from_sequences_and_ratios
+        from ce_net.core.parsers.kitti360 import get_kitti360_split_from_sequences_and_ratios
 
         # Normalize MCD config: if sequences + ratio split, build train/valid/test file lists
         if dataset_name == "MCD" and "sequences" in self.DATA and isinstance(self.DATA.get("split"), list):
@@ -77,6 +78,16 @@ class Trainer:
             n_valid = len(self.DATA["split"]["valid"][0])
             n_test = len(self.DATA["split"]["test"][0])
             print(f"MCD split: train={n_train}, valid={n_valid}, test={n_test}")
+
+        # Normalize KITTI-360 config: use sequences + split ratios from data_cfg (same as MCD)
+        if dataset_name == "KITTI-360" and "sequences" in self.DATA and isinstance(self.DATA.get("split"), list):
+            self.DATA["split"] = get_kitti360_split_from_sequences_and_ratios(
+                self.datadir, self.DATA["sequences"], self.DATA["split"], seed=1024
+            )
+            n_train = len(self.DATA["split"]["train"][0])
+            n_valid = len(self.DATA["split"]["valid"][0])
+            n_test = len(self.DATA["split"]["test"][0])
+            print(f"KITTI-360 split (from sequences + ratios): train={n_train}, valid={n_valid}, test={n_test} scans")
 
         self.parser = Parser(
             root=self.datadir,

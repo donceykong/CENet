@@ -580,9 +580,9 @@ class SemLaserScan(LaserScan):
         if not any(filename.endswith(ext) for ext in self.EXTENSIONS_LABEL):
             raise RuntimeError("Filename extension is not valid label file.")
 
-        # if all goes well, open label
-        label = np.fromfile(filename, dtype=np.int32)
-        label = label.reshape((-1))
+        # if all goes well, open label (KITTI-360 .bin labels are uint32)
+        label = np.fromfile(filename, dtype=np.uint32)
+        label = label.reshape((-1)).astype(np.int32)
 
         if self.drop_points is not False:
             label = np.delete(label, self.points_to_drop)
@@ -609,18 +609,20 @@ class SemLaserScan(LaserScan):
 
     def colorize(self):
         """Colorize pointcloud with the color of each semantic label"""
-        self.sem_label_color = self.sem_color_lut[self.sem_label]
+        sem_idx = np.clip(self.sem_label, 0, len(self.sem_color_lut) - 1)
+        self.sem_label_color = self.sem_color_lut[sem_idx]
         self.sem_label_color = self.sem_label_color.reshape((-1, 3))
 
     def do_label_projection(self):
         # only map colors to labels that exist
         mask = self.proj_idx >= 0
 
-        # semantics
-        self.proj_sem_label[mask] = self.sem_label[self.proj_idx[mask]]
-        self.proj_sem_color[mask] = self.sem_color_lut[
-            self.sem_label[self.proj_idx[mask]]
-        ]
+        # semantics (clip label indices to LUT range, e.g. 65535 from uint16 unlabeled)
+        sem_idx = self.proj_idx[mask]
+        labels = self.sem_label[sem_idx]
+        labels_clipped = np.clip(labels, 0, len(self.sem_color_lut) - 1)
+        self.proj_sem_label[mask] = labels
+        self.proj_sem_color[mask] = self.sem_color_lut[labels_clipped]
 
     def do_bev_label_projection(self):
         """Project a pointcloud into a BEV projection image with semantic labels."""
