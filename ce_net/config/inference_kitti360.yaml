@@ -1,0 +1,31 @@
+# TODO: Use dataset_name to determine paths of other fields
+dataset_path: /media/donceykong/doncey_ssd_02/datasets/KITTI360 # path to dataset
+dataset_name: KITTI-360  # "KITTI-360" or "CU-MULTI"
+infer_or_train: infer   # "train" or "infer"
+# For KITTI-360 inference with MCD-trained model: use data_cfg_kitti360.yaml (has split.test and paths)
+data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/data_cfg_semkitti.yaml
+relative_infer_dir: "inferred_labels/cenet_semkitti"
+
+inference:
+  # MCD-trained model for KITTI-360 inference; or semantic_kitti for regular labels
+  model_path: /media/donceykong/donceys_data_ssd/models/CENet/semantic_kitti/1024_valid5
+  split: test # "valid", "train", or "test"
+
+training:
+  model_name: 1024_valid5
+  use_progressive_growing: True
+
+  model_configs:
+    cenet_kitti360-512:
+      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_kitti360-512.yaml
+      model_name: cenet_kitti360-512
+
+    cenet_kitti360-1024:
+      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_kitti360-1024p.yaml
+      model_name: cenet_kitti360-1024
+      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/kitti360_style/cenet_kitti360-512
+
+    cenet_kitti360-2048:
+      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_kitti360-2048p.yaml
+      model_name: cenet_kitti360-2048
+      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/kitti360_style/cenet_kitti360-1024
