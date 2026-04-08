@@ -39,7 +39,7 @@ def get_mcd_split_from_sequences_and_ratios(root, sequences, split_ratios, seed=
     label_files = []
     for seq in sequences:
         scan_path = os.path.join(root, seq, "lidar_bin", "data")
-        label_path = os.path.join(root, seq, "gt_labels")
+        label_path = os.path.join(root, seq, "gt_labels_terrain")
         if not os.path.isdir(label_path) or not os.path.isdir(scan_path):
             continue
         label_list = [
@@ -168,7 +168,7 @@ class MCD(Dataset):
 
             scan_path = os.path.join(self.root, self.seq, "lidar_bin/data")
             print(f"scan_path: {scan_path}")
-            label_path = os.path.join(self.root, self.seq, "gt_labels")
+            label_path = os.path.join(self.root, self.seq, "gt_labels_terrain")
             print(f"label_path: {label_path}")
 
             label_files = [

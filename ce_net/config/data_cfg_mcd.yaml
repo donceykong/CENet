@@ -30,6 +30,7 @@ labels:
   26: "vehicle-dynamic"
   27: "vehicle-other"
   28: "vehicle-static"
+  29: "terrain"
 color_map: # bgr
   0: [128, 128, 128]  # barrier
   1: [119, 11, 32]    # bike
@@ -60,36 +61,38 @@ color_map: # bgr
   26: [245, 150, 100] # vehicle-dynamic
   27: [51, 0, 51]     # vehicle-other
   28: [0, 0, 142]     # vehicle-static
+  29: [144, 238, 144] # terrain
 content: # as a ratio with the total number of points
-  0: 0.0004964098
-  1: 0.0032825567
-  2: 0.3847619272
-  3: 0.0017111399
-  4: 0.0090896913
-  5: 0.0000755138
-  6: 0.0040267028
-  7: 0.0046319769
+  0: 0.0004845043
+  1: 0.0028376389
+  2: 0.3874187430
+  3: 0.0014509316
+  4: 0.0089666496
+  5: 0.0000778190
+  6: 0.0040215858
+  7: 0.0046329884
   8: 0.0000000000
-  9: 0.0013554483
-  10: 0.0000445265
-  11: 0.0199208713
-  12: 0.0045434075
-  13: 0.0023278386
-  14: 0.0805972382
-  15: 0.0032872571
-  16: 0.0501524326
-  17: 0.0005343171
-  18: 0.1660372138
-  19: 0.0254111778
-  20: 0.0208473085
-  21: 0.0001002078
-  22: 0.0014933917
-  23: 0.0011714296
-  24: 0.0061690324
-  25: 0.1915667332
-  26: 0.0038553015
+  9: 0.0013090397
+  10: 0.0000365489
+  11: 0.0195276030
+  12: 0.0042528316
+  13: 0.0024040830
+  14: 0.0825032846
+  15: 0.0034832634
+  16: 0.0495028170
+  17: 0.0004744483
+  18: 0.1615766260
+  19: 0.0217518100
+  20: 0.0195192738
+  21: 0.0000746930
+  22: 0.0016183114
+  23: 0.0012450504
+  24: 0.0066431832
+  25: 0.1379935165
+  26: 0.0041849286
   27: 0.0000000000
-  28: 0.0125089481
+  28: 0.0108497259
+  29: 0.0611581011
 # classes that are indistinguishable from single scan or inconsistent in
 # ground truth are mapped to their closest equivalent
 learning_map:
@@ -122,6 +125,7 @@ learning_map:
   26: 26  # vehicle-dynamic
   27: 27  # vehicle-other
   28: 28  # vehicle-static
+  29: 29  # terrain
 learning_map_inv: # inverse of previous map
   0: 0
   1: 1
@@ -152,6 +156,7 @@ learning_map_inv: # inverse of previous map
   26: 26
   27: 27
   28: 28
+  29: 29
 learning_ignore: # Ignore classes
   0: False
   1: False
@@ -182,14 +187,15 @@ learning_ignore: # Ignore classes
   26: False
   27: False
   28: False
+  29: False    # terrain
 
-# # For MCD Training
-# sequences: ["kth_day_06", "kth_day_10", "kth_night_01", "kth_night_04"]
-# split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
-
-# For KITTI-360 Inference
-sequences: ["2013_05_28_drive_0004_sync", "2013_05_28_drive_0005_sync", "2013_05_28_drive_0006_sync", "2013_05_28_drive_0007_sync", "2013_05_28_drive_0009_sync", "2013_05_28_drive_0010_sync"]
+# For MCD Training
+sequences: ["kth_day_06", "kth_day_10", "kth_night_01", "kth_night_04"]
 split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
+
+# # For KITTI-360 Inference
+# sequences: ["2013_05_28_drive_0004_sync", "2013_05_28_drive_0005_sync", "2013_05_28_drive_0006_sync", "2013_05_28_drive_0007_sync", "2013_05_28_drive_0009_sync", "2013_05_28_drive_0010_sync"]
+# split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
 
 # For CU-MULTI Inference
 environment: "main_campus"

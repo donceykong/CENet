@@ -185,29 +185,23 @@ class Trainer:
         self.tb_logger = SummaryWriter(log_dir=self.log, flush_secs=20)
 
         # Initialize Weights & Biases
-        wandb_api_key = os.environ.get("WANDB_API_KEY")
-        if wandb_api_key:
-            wandb.login(key=wandb_api_key)
-            # Initialize wandb run
-            wandb.init(
-                entity="donceykong",
-                project="lidar2osm",
-                name=f"train_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                config={
-                    "dataset": dataset_name,
-                    "architecture": self.ARCH["train"]["pipeline"],
-                    "batch_size": self.ARCH["train"]["batch_size"],
-                    "max_epochs": self.ARCH["train"]["max_epochs"],
-                    "learning_rate": self.ARCH["train"]["decay"]["lr"] if "decay" in self.ARCH["train"] else self.ARCH["train"].get("consine", {}).get("min_lr", "N/A"),
-                    "aux_loss": self.ARCH["train"]["aux_loss"],
-                    "num_classes": self.parser.get_n_classes(),
-                },
-                dir=self.log,
-            )
-            print("Weights & Biases logging initialized")
-        else:
-            print("Warning: WANDB_API_KEY not found in environment. Wandb logging disabled.")
-            wandb.init(mode="disabled")  # Disable wandb if no API key
+        wandb.login()
+        wandb.init(
+            entity="donceykong",
+            project="lidar2osm",
+            name=f"train_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            config={
+                "dataset": dataset_name,
+                "architecture": self.ARCH["train"]["pipeline"],
+                "batch_size": self.ARCH["train"]["batch_size"],
+                "max_epochs": self.ARCH["train"]["max_epochs"],
+                "learning_rate": self.ARCH["train"]["decay"]["lr"] if "decay" in self.ARCH["train"] else self.ARCH["train"].get("consine", {}).get("min_lr", "N/A"),
+                "aux_loss": self.ARCH["train"]["aux_loss"],
+                "num_classes": self.parser.get_n_classes(),
+            },
+            dir=self.log,
+        )
+        print("Weights & Biases logging initialized")
 
         # GPU?
         self.gpu = False
