@@ -65,10 +65,16 @@ class EvidentialLossCal:
         self.total_iter += 1
         target_c = 1.0
         kl_alpha = (alpha - target_c) * (1 - labels_1hot) + target_c
-        kl_coef = self.kl_strength * (curr_epoch / max(1, self.max_epoch))
+        # kl_coef = self.kl_strength * (curr_epoch / max(1, self.max_epoch))
+        W = 10  # warmup epochs
+        kl_coef = self.kl_strength * min(1.0, curr_epoch / W)
         loss_kl = self._compute_kl_loss(kl_alpha)
         if self.writer is not None:
             self.writer.add_scalar("Loss/evid_kl_reg", loss_kl.item(), self.total_iter)
+        # Store components for external logging (e.g. wandb)
+        self.last_edl_loss = edl_loss.view(-1).mean().item()
+        self.last_kl_loss = loss_kl.item()
+        self.last_kl_coef = kl_coef
         return edl_loss.view(-1).mean() + kl_coef * loss_kl
 
     def _dirichlet_kl_divergence(self, alphas, target_alphas):

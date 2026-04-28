@@ -12,7 +12,7 @@ import torch.optim as optim
 from matplotlib import pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-
+from torch.optim.lr_scheduler import CosineAnnealingLR
 # Internal
 from ce_net.utils.avgmeter import *
 from ce_net.models.sync_batchnorm.batchnorm import convert_model
@@ -225,43 +225,74 @@ class Trainer:
         #         print(self.optimizer)
 
         if self.ARCH["train"]["scheduler"] == "consine":
-            length = self.parser.get_train_size()
+            # length = self.parser.get_train_size()
+            # dict = self.ARCH["train"]["consine"]
+            # self.optimizer = optim.SGD(
+            #     self.model.parameters(),
+            #     lr=dict["min_lr"],
+            #     momentum=self.ARCH["train"]["momentum"],
+            #     weight_decay=self.ARCH["train"]["w_decay"],
+            # )
+            # self.scheduler = CosineAnnealingWarmUpRestarts(
+            #     optimizer=self.optimizer,
+            #     T_0=dict["first_cycle"] * length,
+            #     T_mult=dict["cycle"],
+            #     eta_max=dict["max_lr"],
+            #     T_up=dict["wup_epochs"] * length,
+            #     gamma=dict["gamma"],
+            # )
+
+            print("--using adam--")
             dict = self.ARCH["train"]["consine"]
-            self.optimizer = optim.SGD(
+            self.optimizer = optim.AdamW(
                 self.model.parameters(),
-                lr=dict["min_lr"],
-                momentum=self.ARCH["train"]["momentum"],
+                lr=dict["max_lr"],                 # use max_lr as the base lr
                 weight_decay=self.ARCH["train"]["w_decay"],
-            )
-            self.scheduler = CosineAnnealingWarmUpRestarts(
-                optimizer=self.optimizer,
-                T_0=dict["first_cycle"] * length,
-                T_mult=dict["cycle"],
-                eta_max=dict["max_lr"],
-                T_up=dict["wup_epochs"] * length,
-                gamma=dict["gamma"],
+                betas=(0.9, 0.999),
+                eps=1e-8,
             )
 
+            # --- Cosine schedule over epochs ---
+            self.scheduler = CosineAnnealingLR(
+                self.optimizer,
+                T_max=self.ARCH["train"]["max_epochs"],  # cosine over epochs
+                eta_min=dict["min_lr"],
+            )
         else:
-            self.optimizer = optim.SGD(
+            # self.optimizer = optim.SGD(
+            #     self.model.parameters(),
+            #     lr=self.ARCH["train"]["decay"]["lr"],
+            #     momentum=self.ARCH["train"]["momentum"],
+            #     weight_decay=self.ARCH["train"]["w_decay"],
+            # )
+            # steps_per_epoch = self.parser.get_train_size()
+            # up_steps = int(self.ARCH["train"]["decay"]["wup_epochs"] * steps_per_epoch)
+            # final_decay = self.ARCH["train"]["decay"]["lr_decay"] ** (
+            #     1 / steps_per_epoch
+            # )
+            # self.scheduler = warmupLR(
+            #     optimizer=self.optimizer,
+            #     lr=self.ARCH["train"]["decay"]["lr"],
+            #     warmup_steps=up_steps,
+            #     momentum=self.ARCH["train"]["momentum"],
+            #     decay=final_decay,
+            # )
+            print("--using adam--")
+            dict = self.ARCH["train"]["consine"]
+            self.optimizer = optim.AdamW(
                 self.model.parameters(),
-                lr=self.ARCH["train"]["decay"]["lr"],
-                momentum=self.ARCH["train"]["momentum"],
+                lr=dict["max_lr"],                 # use max_lr as the base lr
                 weight_decay=self.ARCH["train"]["w_decay"],
-            )
-            steps_per_epoch = self.parser.get_train_size()
-            up_steps = int(self.ARCH["train"]["decay"]["wup_epochs"] * steps_per_epoch)
-            final_decay = self.ARCH["train"]["decay"]["lr_decay"] ** (
-                1 / steps_per_epoch
-            )
-            self.scheduler = warmupLR(
-                optimizer=self.optimizer,
-                lr=self.ARCH["train"]["decay"]["lr"],
-                warmup_steps=up_steps,
-                momentum=self.ARCH["train"]["momentum"],
-                decay=final_decay,
+                betas=(0.9, 0.999),
+                eps=1e-8,
             )
 
+            # --- Cosine schedule over epochs ---
+            self.scheduler = CosineAnnealingLR(
+                self.optimizer,
+                T_max=self.ARCH["train"]["max_epochs"],  # cosine over epochs
+                eta_min=dict["min_lr"],
+            )
         if self.path is not None:
             torch.nn.Module.dump_patches = True
             w_dict = torch.load(

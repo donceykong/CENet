@@ -13,7 +13,7 @@ from matplotlib import pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import wandb
-
+from torch.optim.lr_scheduler import CosineAnnealingLR
 # Internal
 from ce_net.utils.avgmeter import *
 from ce_net.models.sync_batchnorm.batchnorm import convert_model
@@ -176,10 +176,9 @@ class Trainer:
         # Initialize Weights & Biases
         wandb_api_key = os.environ.get("WANDB_API_KEY")
         if wandb_api_key:
-            wandb.login(key=wandb_api_key)
+            wandb.login()
             # Initialize wandb run
             wandb.init(
-                entity="donceykong",
                 project="lidar2osm",
                 name=f"train_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
                 config={
@@ -252,13 +251,32 @@ class Trainer:
 
         if self.ARCH["train"]["scheduler"] == "consine":
             length = self.parser.get_train_size()
+            # dict = self.ARCH["train"]["consine"]
+            # self.optimizer = optim.SGD(
+            #     self.model.parameters(),
+            #     lr=dict["min_lr"],
+            #     momentum=self.ARCH["train"]["momentum"],
+            #     weight_decay=self.ARCH["train"]["w_decay"],
+            # )
+            # self.scheduler = CosineAnnealingWarmUpRestarts(
+            #     optimizer=self.optimizer,
+            #     T_0=dict["first_cycle"] * length,
+            #     T_mult=dict["cycle"],
+            #     eta_max=dict["max_lr"],
+            #     T_up=dict["wup_epochs"] * length,
+            #     gamma=dict["gamma"],
+            # )
+            print("--using adam--")
             dict = self.ARCH["train"]["consine"]
-            self.optimizer = optim.SGD(
+            self.optimizer = optim.AdamW(
                 self.model.parameters(),
-                lr=dict["min_lr"],
-                momentum=self.ARCH["train"]["momentum"],
+                lr=dict["max_lr"],                 # use max_lr as the base lr
                 weight_decay=self.ARCH["train"]["w_decay"],
+                betas=(0.9, 0.999),
+                eps=1e-8,
             )
+
+            # --- Cosine schedule over epochs ---
             self.scheduler = CosineAnnealingWarmUpRestarts(
                 optimizer=self.optimizer,
                 T_0=dict["first_cycle"] * length,
@@ -267,19 +285,36 @@ class Trainer:
                 T_up=dict["wup_epochs"] * length,
                 gamma=dict["gamma"],
             )
-
         else:
-            self.optimizer = optim.SGD(
-                self.model.parameters(),
-                lr=self.ARCH["train"]["decay"]["lr"],
-                momentum=self.ARCH["train"]["momentum"],
-                weight_decay=self.ARCH["train"]["w_decay"],
-            )
+            # self.optimizer = optim.SGD(
+            #     self.model.parameters(),
+            #     lr=self.ARCH["train"]["decay"]["lr"],
+            #     momentum=self.ARCH["train"]["momentum"],
+            #     weight_decay=self.ARCH["train"]["w_decay"],
+            # )
             steps_per_epoch = self.parser.get_train_size()
             up_steps = int(self.ARCH["train"]["decay"]["wup_epochs"] * steps_per_epoch)
             final_decay = self.ARCH["train"]["decay"]["lr_decay"] ** (
                 1 / steps_per_epoch
             )
+            # self.scheduler = warmupLR(
+            #     optimizer=self.optimizer,
+            #     lr=self.ARCH["train"]["decay"]["lr"],
+            #     warmup_steps=up_steps,
+            #     momentum=self.ARCH["train"]["momentum"],
+            #     decay=final_decay,
+            # )
+            print("--using adam--")
+            dict = self.ARCH["train"]["consine"]
+            self.optimizer = optim.AdamW(
+                self.model.parameters(),
+                lr=dict["max_lr"],                 # use max_lr as the base lr
+                weight_decay=self.ARCH["train"]["w_decay"],
+                betas=(0.9, 0.999),
+                eps=1e-8,
+            )
+
+            # --- Cosine schedule over epochs ---
             self.scheduler = warmupLR(
                 optimizer=self.optimizer,
                 lr=self.ARCH["train"]["decay"]["lr"],
@@ -287,7 +322,6 @@ class Trainer:
                 momentum=self.ARCH["train"]["momentum"],
                 decay=final_decay,
             )
-
         if self.path is not None:
             torch.nn.Module.dump_patches = True
             w_dict = torch.load(
@@ -768,7 +802,7 @@ class Trainer:
                 )
                 
                 # Log to wandb
-                wandb.log({
+                wandb_train_dict = {
                     "train/loss": losses.val,
                     "train/loss_avg": losses.avg,
                     "train/accuracy": acc.val,
@@ -780,7 +814,12 @@ class Trainer:
                     "train/learning_rate": lr,
                     "train/epoch": epoch,
                     "train/batch": i,
-                }, step=epoch * len(train_loader) + i)
+                }
+                if self.use_evidential:
+                    wandb_train_dict["train/edl_loss"] = self.evidential_loss_cal.last_edl_loss
+                    wandb_train_dict["train/kl_loss"] = self.evidential_loss_cal.last_kl_loss
+                    wandb_train_dict["train/kl_coef"] = self.evidential_loss_cal.last_kl_coef
+                wandb.log(wandb_train_dict, step=epoch * len(train_loader) + i)
             # step scheduler
             scheduler.step()
         return acc.avg, iou.avg, losses.avg

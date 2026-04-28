@@ -238,15 +238,29 @@ class Parser:
             assert len(self.validloader) > 0
             self.validiter = iter(self.validloader)
 
-        if not self.TRAIN: 
+        if not self.TRAIN:
             if self.dataset_name == "CU-MULTI":
                 if self.test_robots is not None:
-                    print(f"\n WE ARE USING TEST BOTS: {self.test_robots}")   
+                    print(f"\n WE ARE USING TEST BOTS: {self.test_robots}")
                     # if self.test_sequences:
                     self.test_dataset = CU_MULTI(
                         root=self.root,
                         environment=self.environment,
                         robots=self.test_robots,
+                        labels=self.labels,
+                        color_map=self.color_map,
+                        learning_map=self.learning_map,
+                        learning_map_inv=self.learning_map_inv,
+                        sensor=self.sensor,
+                        max_points=max_points,
+                        gt=False,
+                    )
+
+            elif self.dataset_name == "KITTI-360":
+                if self.test_sequences:
+                    self.test_dataset = KITTI_360(
+                        root=self.root,
+                        sequences=self.test_sequences,
                         labels=self.labels,
                         color_map=self.color_map,
                         learning_map=self.learning_map,

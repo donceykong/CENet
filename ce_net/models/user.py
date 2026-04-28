@@ -52,6 +52,28 @@ class User:
                 TRAIN=False,
             )
 
+        elif self.dataset_name == "KITTI-360":
+            self.sequences = self.DATA.get("sequences", [])
+            split_cfg = self.DATA.get("split") if isinstance(self.DATA.get("split"), dict) else {}
+            self.parser = Parser(
+                root=self.dataset_path,
+                dataset_name=dataset_name,
+                train_sequences=split_cfg.get("train", []),
+                valid_sequences=split_cfg.get("valid", []),
+                test_sequences=self.sequences,
+                labels=self.DATA["labels"],
+                color_map=self.DATA["color_map"],
+                learning_map=self.DATA["learning_map"],
+                learning_map_inv=self.DATA["learning_map_inv"],
+                sensor=self.ARCH["dataset"]["sensor"],
+                max_points=self.ARCH["dataset"]["max_points"],
+                batch_size=1,
+                workers=self.ARCH["train"]["workers"],
+                gt=False,
+                shuffle_train=False,
+                TRAIN=False,
+            )
+
         elif self.dataset_name == "MCD":
             self.sequences = self.DATA.get("sequences", [self.DATA.get("seq")] if self.DATA.get("seq") else [])
             self.parser = Parser(
@@ -353,8 +375,11 @@ class User:
                     print(f"Saving scan to {label_dir}/{path_name}")    
                     path = os.path.join(label_dir, path_name)
                 elif self.dataset_name == "KITTI-360":
-                    # seq = f"2013_05_28_drive_{path_seq:04d}_sync"
-                    path = os.path.join(self.dataset_path, "data_3d_semantics", path_seq, "inferred", path_name)
+                    relative_infer_dir = self.DATA.get("relative_infer_dir", "inferred_labels/cenet_mcd")
+                    label_dir = os.path.join(self.dataset_path, path_seq, relative_infer_dir)
+                    if not os.path.exists(label_dir):
+                        os.makedirs(label_dir)
+                    path = os.path.join(label_dir, path_name)
                 elif self.dataset_name == "MCD":
                     # path_seq from batch is sequence name (e.g. kth_day_06); save under relative_infer_dir
                     relative_infer_dir = self.DATA.get("relative_infer_dir", "inferred_labels/cenet_mcd")

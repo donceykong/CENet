@@ -9,7 +9,7 @@ train:
   evidential:        #  when evidential_loss: True
     unc_act: "exp"    #  "exp" | "relu" | "softplus"
     unc_type: "log"  #  "log" | "digamma"
-    kl_strength: 0.5
+    kl_strength: 0.01
     ohem: null       #  null or float in (0,1) for OHEM
   aux_loss: True
   lamda: 1.0
@@ -17,7 +17,7 @@ train:
   max_epochs: 100
   consine:
     min_lr: 0.0001
-    max_lr: 0.01
+    max_lr: 0.001
     first_cycle: 50
     cycle: 1
     wup_epochs: 1

@@ -112,6 +112,8 @@ if __name__ == "__main__":
         DATA.setdefault("sequences", [DATA.get("seq")] if DATA.get("seq") else [])
     elif FLAGS.dataset_name == "CU-MULTI":
         DATA["relative_infer_dir"] = relative_infer_dir
+    elif FLAGS.dataset_name == "KITTI-360":
+        DATA["relative_infer_dir"] = relative_infer_dir
 
     # create log folder for each sequence
     try:
@@ -128,12 +130,17 @@ if __name__ == "__main__":
                     os.makedirs(conf_dir)
                     os.makedirs(multiclass_conf_dir)
         elif FLAGS.dataset_name == "KITTI-360":
-            for seq in DATA["split"]["test"]:
-                seq = f"2013_05_28_drive_{seq:04d}_sync"
-                inference_dir = os.path.join(FLAGS.dataset_path, "data_3d_semantics", seq, "inferred")
+            for seq in DATA["sequences"]:
+                inference_dir = os.path.join(FLAGS.dataset_path, seq, relative_infer_dir)
+                conf_dir = os.path.join(inference_dir, "confidence_scores")
+                multiclass_conf_dir = os.path.join(inference_dir, "multiclass_confidence_scores")
                 print(f"inference_dir: {inference_dir}")
                 if not os.path.isdir(inference_dir):
                     os.makedirs(inference_dir)
+                if not os.path.isdir(conf_dir):
+                    os.makedirs(conf_dir)
+                if not os.path.isdir(multiclass_conf_dir):
+                    os.makedirs(multiclass_conf_dir)
         elif FLAGS.dataset_name == "MCD":
             relative_infer_dir = DATA.get("relative_infer_dir", "inferred_labels/cenet_mcd")
             for seq in DATA["sequences"]:

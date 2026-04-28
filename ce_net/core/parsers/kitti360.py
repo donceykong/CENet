@@ -123,43 +123,27 @@ class KITTI_360(Dataset):
 
         # fill in with names, checking that all sequences are complete
         for seq in self.sequences:
-            # to string
-            seq = f"2013_05_28_drive_{seq:04d}_sync"
+            # to string (handle both int sequence numbers and full string names)
+            if isinstance(seq, int):
+                seq = f"2013_05_28_drive_{seq:04d}_sync"
 
             print(f"parsing seq {seq}")
 
             # get paths for each
-            scan_path = os.path.join(
-                self.root,
-                "data_3d_raw",
-                seq,
-                "velodyne_points/data",
-            )
-            # label_path = os.path.join(
-            #     self.root, "data_3d_semantics", seq, "labels_int32"
-            # )
+            scan_path = os.path.join(self.root, seq, "velodyne_points/data")
+            label_path = os.path.join(self.root, seq, "gt_labels")
 
+            print(f"scan_path: {scan_path}"
+                  f"\nlabel_path: {label_path}")
             # orig_label_path = os.path.join(self.root, "data_3d_semantics", seq, "labels")
-            # orig_label_files = [
-            #     os.path.join(dp, f)
-            #     for dp, dn, fn in os.walk(os.path.expanduser(orig_label_path))
-            #     for f in fn
-            #     if is_label(f)
-            # ]
-
-            # orig_label_bases = set(
-            #     os.path.splitext(os.path.basename(f))[0] for f in orig_label_files
-            # )
-
-            osm_label_path = os.path.join(self.root, "data_3d_semantics", seq, "osm_labels")
-            osm_label_files = [
+            label_files = [
                 os.path.join(dp, f)
-                for dp, dn, fn in os.walk(os.path.expanduser(osm_label_path))
+                for dp, dn, fn in os.walk(os.path.expanduser(label_path))
                 for f in fn
                 if is_label(f)
             ]
-            osm_label_bases = set(
-                os.path.splitext(os.path.basename(f))[0] for f in osm_label_files
+            label_bases = set(
+                os.path.splitext(os.path.basename(f))[0] for f in label_files
             )
 
             # Filter scan files to include only those with a corresponding label file
@@ -168,17 +152,17 @@ class KITTI_360(Dataset):
                 for dp, dn, fn in os.walk(os.path.expanduser(scan_path))
                 for f in fn
                 if is_scan(f)
-                and os.path.splitext(os.path.basename(f))[0] in osm_label_bases
+                and os.path.splitext(os.path.basename(f))[0] in label_bases
             ]
 
-            print(f"\n\nlen(scan_files): {len(scan_files)}, len(label_files): {len(osm_label_files)}")
+            print(f"\n\nlen(scan_files): {len(scan_files)}, len(label_files): {len(label_files)}")
             # # check all scans have labels
             if self.gt:
-                assert len(scan_files) == len(osm_label_files)
+                assert len(scan_files) == len(label_files)
 
             # extend list
             self.scan_files.extend(scan_files)
-            self.label_files.extend(osm_label_files)
+            self.label_files.extend(label_files)
 
         # sort for correspondance
         self.scan_files.sort()
