@@ -116,7 +116,7 @@ if __name__ == "__main__":
     try:
         if FLAGS.dataset_name == "CU-MULTI":
             env = DATA["environment"]
-            rel_dir = DATA.get("relative_infer_dir", "inferred_labels/cenet_semkitti")
+            rel_dir = DATA.get("relative_infer_dir", "inferred_labels/UNSPEC")
             for robot in DATA["test_robots"]:
                 inference_dir = os.path.join(FLAGS.dataset_path, env, robot, rel_dir)
                 conf_dir = os.path.join(inference_dir, "confidence_scores")
@@ -127,7 +127,7 @@ if __name__ == "__main__":
                     os.makedirs(conf_dir)
                     os.makedirs(multiclass_conf_dir)
         elif FLAGS.dataset_name == "KITTI-360":
-            rel_dir = DATA.get("relative_infer_dir", "inferred_labels/cenet_semkitti")
+            rel_dir = DATA.get("relative_infer_dir", "inferred_labels/UNSPEC")
             # sequences: list of dir names (e.g. ["2013_05_28_drive_0009_sync"]); else split.test as indices
             seq_list = DATA.get("sequences")
             if not seq_list and isinstance(DATA.get("split"), dict):
@@ -146,7 +146,7 @@ if __name__ == "__main__":
                 if not os.path.isdir(multiclass_conf_dir):
                     os.makedirs(multiclass_conf_dir)
         elif FLAGS.dataset_name == "MCD":
-            relative_infer_dir = DATA.get("relative_infer_dir", "inferred_labels/cenet_semkitti")
+            relative_infer_dir = DATA.get("relative_infer_dir", "inferred_labels/UNSPEC")
             for seq in DATA["sequences"]:
                 inference_dir = os.path.join(FLAGS.dataset_path, seq, relative_infer_dir)
                 conf_dir = os.path.join(inference_dir, "confidence_scores")

@@ -115,6 +115,7 @@ class MCD(Dataset):
         # save deats
         self.root = os.path.join(root)
         self.seq = seq
+        print(f"seq: {self.seq}")
         self.labels = labels    
         self.color_map = color_map
         self.learning_map = learning_map

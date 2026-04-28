@@ -273,6 +273,7 @@ class Parser:
 
             elif self.dataset_name == "MCD":
                 if self.test_sequences and isinstance(self.test_sequences, (list, tuple)) and isinstance(self.test_sequences[0], str):
+                    print(f"root: {self.root}")
                     # Infer on all scans in each sequence (no split)
                     scan_files = []
                     for seq in self.test_sequences:
@@ -282,8 +283,9 @@ class Parser:
                         for f in sorted(os.listdir(scan_path)):
                             if f.endswith(".bin"):
                                 scan_files.append(os.path.join(scan_path, f))
-                    # Dummy label paths (unused when gt=False)
+                    # Dummy label   (unused when gt=False)
                     label_files = list(scan_files)
+                    print(f"label_files: {label_files}")
                     self.test_dataset = MCD(
                         root=self.root,
                         labels=self.labels,

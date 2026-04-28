@@ -53,7 +53,8 @@ class User:
             )
 
         elif self.dataset_name == "MCD":
-            self.sequences = self.DATA.get("sequences", [self.DATA.get("seq")] if self.DATA.get("seq") else [])
+            self.sequences = self.DATA.get("sequences") #, [self.DATA.get("seq")] if self.DATA.get("seq") else [])
+            print(f"WTF: {self.sequences}")
             self.parser = Parser(
                 root=self.dataset_path,
                 dataset_name=dataset_name,
