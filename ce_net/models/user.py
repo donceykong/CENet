@@ -53,24 +53,26 @@ class User:
             )
 
         elif self.dataset_name == "MCD":
-            self.sequences = self.DATA.get("sequences") #, [self.DATA.get("seq")] if self.DATA.get("seq") else [])
-            print(f"WTF: {self.sequences}")
+            # scripts/infer.py builds per-sequence shards (each tagged with
+            # the sensor it was recorded with) and stores them in
+            # DATA["split"]["test"].
+            shards = self.DATA.get("split", {}).get("test", [])
+            self.sequences = [s["seq"] for s in shards]
             self.parser = Parser(
                 root=self.dataset_path,
                 dataset_name=dataset_name,
                 train_sequences=[],
                 valid_sequences=[],
-                test_sequences=self.sequences,
+                test_sequences=shards,
                 labels=self.DATA["labels"],
                 color_map=self.DATA["color_map"],
                 learning_map=self.DATA["learning_map"],
                 learning_map_inv=self.DATA["learning_map_inv"],
-                sensor=self.ARCH["dataset"]["sensor"],
+                sensor=self.ARCH["dataset"].get("sensor"),
                 max_points=self.ARCH["dataset"]["max_points"],
                 batch_size=1,
                 workers=self.ARCH["train"]["workers"],
                 environment=self.DATA.get("environment"),
-                seq=self.sequences[0] if self.sequences else None,
                 gt=False,
                 shuffle_train=False,
                 TRAIN=False,

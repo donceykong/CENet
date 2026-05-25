@@ -169,7 +169,7 @@ learning_ignore: # Ignore classes
   8: False
   9: False
   10: False
-  11: False
+  11: True
   12: False
   13: False
   14: False
@@ -189,20 +189,34 @@ learning_ignore: # Ignore classes
   28: False
   29: False    # terrain
 
-# For MCD Training
-#sequences: ["kth_day_06", "kth_day_10", "kth_night_01", "kth_night_04"]
-split: [0.8, 0.1, 0.1] # train, valid, test (used only during training)
+# MCD sequences grouped by the LiDAR they were recorded with.
+# Each group's `sensor` references config/SENSORS/<name>.yaml.
+# Sequence paths are relative to the dataset root in training_mcd.yaml /
+# inference_mcd.yaml (e.g. /media/donceykong/donceys_data_ssd/datasets/mcd).
+sensor_groups:
+  - sensor: OS1_64
+    sequences:
+      - tuhh/tuhh_day_02
+      - tuhh/tuhh_day_03
+      - tuhh/tuhh_day_04
+      - tuhh/tuhh_night_07
+      - tuhh/tuhh_night_08
+      - tuhh/tuhh_night_09
+  - sensor: OS1_128
+    sequences:
+      - ntu/ntu_day_01
+      - ntu/ntu_day_02
+      - ntu/ntu_day_10
+      - ntu/ntu_night_04
+      - ntu/ntu_night_08
+      - ntu/ntu_night_13
 
-# For MCD Inference 
-sequences: ["kth_day_09"]
+# Train/valid/test split ratios. Applied per-sensor-group so the sensor
+# distribution is preserved across splits. Used only during training.
+split: [0.8, 0.1, 0.1]
 
-# # For KITTI-360 Inference
-# sequences: ["2013_05_28_drive_0004_sync", "2013_05_28_drive_0005_sync", "2013_05_28_drive_0006_sync", "2013_05_28_drive_0007_sync", "2013_05_28_drive_0009_sync", "2013_05_28_drive_0010_sync"]
-# sequences: ["2013_05_28_drive_0000_sync", "2013_05_28_drive_0009_sync"]
-
-# For CU-MULTI Inference
-#environment: "main_campus"
-#robots: ["robot1"]
-#train_robots: ["robot1"]
-#val_robots: ["robot1"]
-#test_robots: ["robot1"]
+# Optional subset for inference. If omitted, inference runs over every
+# sequence in sensor_groups above.
+# infer_sequences:
+#   - tuhh/tuhh_day_03
+#   - ntu/ntu_day_01

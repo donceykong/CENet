@@ -10,22 +10,3 @@ inference:
   # MCD-trained model for KITTI-360 inference; or semantic_kitti for regular labels
   model_path: /media/donceykong/donceys_data_ssd/models/CENet/semantic_kitti/1024_valid5
   split: test # "valid", "train", or "test"
-
-training:
-  model_name: 1024_valid5
-  use_progressive_growing: True
-
-  model_configs:
-    cenet_kitti360-512:
-      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_kitti360-512.yaml
-      model_name: cenet_kitti360-512
-
-    cenet_kitti360-1024:
-      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_kitti360-1024p.yaml
-      model_name: cenet_kitti360-1024
-      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/kitti360_style/cenet_kitti360-512
-
-    cenet_kitti360-2048:
-      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_kitti360-2048p.yaml
-      model_name: cenet_kitti360-2048
-      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/kitti360_style/cenet_kitti360-1024

@@ -19,7 +19,7 @@ training:
       model_name: cenet_kitti360-1024
       pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/kitti360_style/cenet_kitti360-512
 
-    cenet_kitti360-2048:
-      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_kitti360-2048p.yaml
-      model_name: cenet_kitti360-2048
-      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/kitti360_style/cenet_kitti360-1024
+    # cenet_kitti360-2048:
+    #   arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENet/ce_net/config/arch/train/cenet_kitti360-2048p.yaml
+    #   model_name: cenet_kitti360-2048
+    #   pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/kitti360_style/cenet_kitti360-1024

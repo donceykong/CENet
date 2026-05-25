@@ -11,10 +11,44 @@ except ImportError:
 
 import numpy as np
 
-# Internal 
+# Internal
 from ce_net.core.parsers.cumulti import CU_MULTI
 from ce_net.core.parsers.kitti360 import KITTI_360
 from ce_net.core.parsers.mcd import MCD
+
+
+def _build_mcd_concat(shards, *, labels, color_map, learning_map, learning_map_inv,
+                      max_points, gt, transform, root):
+    """Build one MCD dataset per sensor shard and concatenate them.
+
+    `shards` is a list of dicts with keys: sensor, scan_files, label_files
+    (see ce_net.core.parsers.mcd.split_mcd_sensor_groups /
+    build_mcd_inference_shards).
+    """
+    datasets = []
+    for shard in shards:
+        if not shard.get("scan_files"):
+            continue
+        datasets.append(
+            MCD(
+                root=root,
+                labels=labels,
+                color_map=color_map,
+                learning_map=learning_map,
+                learning_map_inv=learning_map_inv,
+                sensor=shard["sensor"],
+                max_points=max_points,
+                scan_files=shard["scan_files"],
+                label_files=shard["label_files"],
+                gt=gt,
+                transform=transform,
+            )
+        )
+    if not datasets:
+        raise ValueError("No MCD shards have any scans; check sensor_groups / dataset paths.")
+    if len(datasets) == 1:
+        return datasets[0]
+    return torch.utils.data.ConcatDataset(datasets)
 
 class Parser:
     # standard conv, BN, relu
@@ -55,11 +89,6 @@ class Parser:
         self.train_sequences = train_sequences
         self.valid_sequences = valid_sequences
         self.test_sequences = test_sequences
-        self.mcd_seq = None
-        if dataset_name == "MCD" and not (
-            isinstance(train_sequences, (list, tuple)) and len(train_sequences) == 2
-        ) and (isinstance(train_sequences, list) and len(train_sequences) > 0 or not isinstance(train_sequences, list)):
-            self.mcd_seq = train_sequences[0] if isinstance(train_sequences, list) else train_sequences
         self.labels = labels
         self.color_map = color_map
         self.learning_map = learning_map
@@ -106,34 +135,17 @@ class Parser:
                     gt=self.gt,
                 )
             elif dataset_name == "MCD":
-                if isinstance(self.train_sequences, (list, tuple)) and len(self.train_sequences) == 2:
-                    scan_files, label_files = self.train_sequences
-                    self.train_dataset = MCD(
-                        root=self.root,
-                        labels=self.labels,
-                        color_map=self.color_map,
-                        learning_map=self.learning_map,
-                        learning_map_inv=self.learning_map_inv,
-                        sensor=self.sensor,
-                        max_points=max_points,
-                        scan_files=scan_files,
-                        label_files=label_files,
-                        gt=self.gt,
-                        transform=True,
-                    )
-                else:
-                    self.train_dataset = MCD(
-                        root=self.root,
-                        seq=self.mcd_seq,
-                        labels=self.labels,
-                        color_map=self.color_map,
-                        learning_map=self.learning_map,
-                        learning_map_inv=self.learning_map_inv,
-                        sensor=self.sensor,
-                        max_points=max_points,
-                        gt=self.gt,
-                        transform=True,
-                    )
+                self.train_dataset = _build_mcd_concat(
+                    self.train_sequences,
+                    labels=self.labels,
+                    color_map=self.color_map,
+                    learning_map=self.learning_map,
+                    learning_map_inv=self.learning_map_inv,
+                    max_points=max_points,
+                    gt=self.gt,
+                    transform=True,
+                    root=self.root,
+                )
             #     np.random.seed(0)
             #     dataset_size = len(self.train_dataset)
             #     indices = list(range(dataset_size))
@@ -199,33 +211,17 @@ class Parser:
                     gt=self.gt,
                 )
             elif self.dataset_name == "MCD" and self.valid_sequences is not None:
-                if isinstance(self.valid_sequences, (list, tuple)) and len(self.valid_sequences) == 2:
-                    scan_files, label_files = self.valid_sequences
-                    self.valid_dataset = MCD(
-                        root=self.root,
-                        labels=self.labels,
-                        color_map=self.color_map,
-                        learning_map=self.learning_map,
-                        learning_map_inv=self.learning_map_inv,
-                        sensor=self.sensor,
-                        max_points=max_points,
-                        scan_files=scan_files,
-                        label_files=label_files,
-                        gt=self.gt,
-                    )
-                else:
-                    seq = self.valid_sequences[0] if isinstance(self.valid_sequences, list) else self.valid_sequences
-                    self.valid_dataset = MCD(
-                        root=self.root,
-                        seq=seq,
-                        labels=self.labels,
-                        color_map=self.color_map,
-                        learning_map=self.learning_map,
-                        learning_map_inv=self.learning_map_inv,
-                        sensor=self.sensor,
-                        max_points=max_points,
-                        gt=self.gt,
-                    )
+                self.valid_dataset = _build_mcd_concat(
+                    self.valid_sequences,
+                    labels=self.labels,
+                    color_map=self.color_map,
+                    learning_map=self.learning_map,
+                    learning_map_inv=self.learning_map_inv,
+                    max_points=max_points,
+                    gt=self.gt,
+                    transform=False,
+                    root=self.root,
+                )
 
             self.validloader = torch.utils.data.DataLoader(
                 self.valid_dataset,
@@ -272,45 +268,17 @@ class Parser:
                     )
 
             elif self.dataset_name == "MCD":
-                if self.test_sequences and isinstance(self.test_sequences, (list, tuple)) and isinstance(self.test_sequences[0], str):
-                    print(f"root: {self.root}")
-                    # Infer on all scans in each sequence (no split)
-                    scan_files = []
-                    for seq in self.test_sequences:
-                        scan_path = os.path.join(self.root, seq, "lidar_bin", "data")
-                        if not os.path.isdir(scan_path):
-                            continue
-                        for f in sorted(os.listdir(scan_path)):
-                            if f.endswith(".bin"):
-                                scan_files.append(os.path.join(scan_path, f))
-                    # Dummy label   (unused when gt=False)
-                    label_files = list(scan_files)
-                    print(f"label_files: {label_files}")
-                    self.test_dataset = MCD(
-                        root=self.root,
-                        labels=self.labels,
-                        color_map=self.color_map,
-                        learning_map=self.learning_map,
-                        learning_map_inv=self.learning_map_inv,
-                        sensor=self.sensor,
-                        max_points=max_points,
-                        scan_files=scan_files,
-                        label_files=label_files,
-                        gt=False,
-                    )
-                else:
-                    seq = self.seq or (self.test_sequences[0] if self.test_sequences else None)
-                    self.test_dataset = MCD(
-                        root=self.root,
-                        seq=seq,
-                        labels=self.labels,
-                        color_map=self.color_map,
-                        learning_map=self.learning_map,
-                        learning_map_inv=self.learning_map_inv,
-                        sensor=self.sensor,
-                        max_points=max_points,
-                        gt=False,
-                    )
+                self.test_dataset = _build_mcd_concat(
+                    self.test_sequences,
+                    labels=self.labels,
+                    color_map=self.color_map,
+                    learning_map=self.learning_map,
+                    learning_map_inv=self.learning_map_inv,
+                    max_points=max_points,
+                    gt=False,
+                    transform=False,
+                    root=self.root,
+                )
 
             self.testloader = torch.utils.data.DataLoader(
                 self.test_dataset,

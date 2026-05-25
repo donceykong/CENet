@@ -50,17 +50,10 @@ post:
       cutoff: 2.0
 
 ################################################################################
-# dataset (to find parser)
+# dataset (to find parser). sensor is injected from training.sensor_config
+# (see config/SENSORS/) and width comes from model_configs.<model>.img_width.
 ################################################################################
 dataset:
   labels: "mcd"
   scans: "mcd"
   max_points: 150000 # max of any scan in dataset
-  sensor:
-    name: "ouster64"
-    type: "spherical" # projective
-    fov_up: 30.5
-    fov_down: -22.5
-    img_prop:
-      width: 1024
-      height: 64

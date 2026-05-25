@@ -1,0 +1,8 @@
+# Ouster OS1-128 sensor properties.
+# Range-image dimensions (img_prop.width / img_prop.height) come from
+# training/inference model_configs.<model>.{img_width, img_height}.
+sensor:
+  name: "ouster128"
+  type: "spherical"   # or "projective"
+  fov_up: 22.5
+  fov_down: -22.5
