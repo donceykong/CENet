@@ -1,9 +1,9 @@
-dataset_path: /media/donceykong/donceys_data_ssd/datasets/mcd
+dataset_path: /media/donceykong/doncey_ssd_021/datasets/mcd   # KTH lives here (NTU/TUHH are on donceys_data_ssd)
 dataset_name: MCD       # "KITTI-360", "CU-MULTI", or "MCD"
 infer_or_train: infer   # "train" or "infer"
 data_config: /home/donceykong/Desktop/ARPG/projects/OSM-BKI-FULL/CENet_OG/ce_net/config/data_cfg_mcd.yaml
-relative_infer_dir: "inferred_labels/cenet_mcd_terrain"
+relative_infer_dir: "inferred_labels/cenet_mcd_terrain_ntu_tuhh"
 
 inference:
-  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_terrain_ntu_tuhh/cenet_mcd-512
+  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_terrain_ntu_tuhh/cenet_mcd-1024
   split: test           # "valid", "train", or "test"

@@ -210,13 +210,28 @@ sensor_groups:
       - ntu/ntu_night_04
       - ntu/ntu_night_08
       - ntu/ntu_night_13
+  # KTH was recorded with the same Ouster OS1-64 as TUHH (64x1024).
+  # Sequences are top-level on doncey_ssd_021 (no "kth/" subdir).
+  - sensor: OS1_64
+    sequences:
+      - kth_day_06
+      - kth_day_09
+      - kth_day_10
+      - kth_night_01
+      - kth_night_04
+      - kth_night_05
 
 # Train/valid/test split ratios. Applied per-sensor-group so the sensor
 # distribution is preserved across splits. Used only during training.
 split: [0.8, 0.1, 0.1]
 
 # Optional subset for inference. If omitted, inference runs over every
-# sequence in sensor_groups above.
-# infer_sequences:
-#   - tuhh/tuhh_day_03
-#   - ntu/ntu_day_01
+# sequence in sensor_groups above. Scoped to KTH here so it only infers the
+# sequences present on doncey_ssd_021 (dataset_path in inference_mcd.yaml).
+infer_sequences:
+  - kth_day_06
+  - kth_day_09
+  - kth_day_10
+  - kth_night_01
+  - kth_night_04
+  - kth_night_05
