@@ -66,17 +66,10 @@ class Trainer:
 
         # get the data
         from ce_net.core.parsers.parser import Parser
-        from ce_net.core.parsers.mcd import get_mcd_split_from_sequences_and_ratios
 
-        # Normalize MCD config: if sequences + ratio split, build train/valid/test file lists
-        if dataset_name == "MCD" and "sequences" in self.DATA and isinstance(self.DATA.get("split"), list):
-            self.DATA["split"] = get_mcd_split_from_sequences_and_ratios(
-                self.datadir, self.DATA["sequences"], self.DATA["split"], seed=1024
-            )
-            n_train = len(self.DATA["split"]["train"][0])
-            n_valid = len(self.DATA["split"]["valid"][0])
-            n_test = len(self.DATA["split"]["test"][0])
-            print(f"MCD split: train={n_train}, valid={n_valid}, test={n_test}")
+        # MCD splits (per-sensor shards) are built upstream in scripts/train.py
+        # via split_mcd_sensor_groups, so DATA["split"] already carries
+        # {"train"/"valid"/"test": [shard, ...]} here.
 
         self.parser = Parser(
             root=self.datadir,
@@ -88,7 +81,7 @@ class Trainer:
             color_map=self.DATA["color_map"],
             learning_map=self.DATA["learning_map"],
             learning_map_inv=self.DATA["learning_map_inv"],
-            sensor=self.ARCH["dataset"]["sensor"],
+            sensor=self.ARCH["dataset"].get("sensor"),
             max_points=self.ARCH["dataset"]["max_points"],
             batch_size=self.ARCH["train"]["batch_size"],
             workers=self.ARCH["train"]["workers"],

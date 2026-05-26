@@ -14,6 +14,8 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ce_net.models.user import User
 from ce_net import CONFIG_DIR
+from ce_net.core.parsers.mcd import build_mcd_inference_shards
+from ce_net.utils.sensor import materialize_sensor_groups
 
 def load_yaml(config_path):
     with open(config_path, "r") as file:
@@ -109,7 +111,33 @@ if __name__ == "__main__":
     relative_infer_dir = config.get("relative_infer_dir", "inferred_labels/cenet_mcd")
     if FLAGS.dataset_name == "MCD":
         DATA["relative_infer_dir"] = relative_infer_dir
-        DATA.setdefault("sequences", [DATA.get("seq")] if DATA.get("seq") else [])
+        # Resolve per-sensor inference shards from sensor_groups (each sequence
+        # is projected with the LiDAR it was recorded with). img_width/height
+        # come from the model run dir's model_config.yaml (persisted at train).
+        model_cfg_path = os.path.join(FLAGS.model, "model_config.yaml")
+        if not os.path.isfile(model_cfg_path):
+            print(f"Missing {model_cfg_path}; re-train so img dims are persisted.")
+            quit()
+        model_cfg = yaml.safe_load(open(model_cfg_path, "r"))
+        if "sensor_groups" not in DATA:
+            print("data_cfg is missing 'sensor_groups' (required for MCD).")
+            quit()
+        groups = materialize_sensor_groups(
+            DATA["sensor_groups"],
+            img_width=model_cfg["img_width"],
+            img_height=model_cfg["img_height"],
+        )
+        shards = build_mcd_inference_shards(
+            FLAGS.dataset_path, groups, sequences=DATA.get("infer_sequences")
+        )
+        if not shards:
+            print("No MCD inference sequences resolved. Check sensor_groups / "
+                  "infer_sequences / dataset_path.")
+            quit()
+        for s in shards:
+            print(f"  {s['seq']:35s} sensor={s['sensor_name']:8s} scans={len(s['scan_files'])}")
+        DATA["split"] = {"train": [], "valid": [], "test": shards}
+        ARCH.setdefault("dataset", {})["sensor"] = None
     elif FLAGS.dataset_name == "CU-MULTI":
         DATA["relative_infer_dir"] = relative_infer_dir
     elif FLAGS.dataset_name == "KITTI-360":
@@ -143,8 +171,8 @@ if __name__ == "__main__":
                     os.makedirs(multiclass_conf_dir)
         elif FLAGS.dataset_name == "MCD":
             relative_infer_dir = DATA.get("relative_infer_dir", "inferred_labels/cenet_mcd")
-            for seq in DATA["sequences"]:
-                inference_dir = os.path.join(FLAGS.dataset_path, seq, relative_infer_dir)
+            for s in DATA["split"]["test"]:
+                inference_dir = os.path.join(FLAGS.dataset_path, s["seq"], relative_infer_dir)
                 conf_dir = os.path.join(inference_dir, "confidence_scores")
                 multiclass_conf_dir = os.path.join(inference_dir, "multiclass_confidence_scores")
                 print(f"inference_dir: {inference_dir}")

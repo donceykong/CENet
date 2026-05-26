@@ -1,25 +1,34 @@
-# TODO: Use dataset_name to determine paths of other fields
-dataset_path: /media/donceykong/doncey_ssd_011/datasets/MCD
+dataset_path: /media/donceykong/donceys_data_ssd/datasets/mcd   # NTU + TUHH live here
 dataset_name: MCD    # "KITTI-360", "CU-MULTI", or "MCD"
 infer_or_train: train     # "train" or "infer"
-data_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENetEL/CENet/ce_net/config/data_cfg_mcd.yaml
+data_config: /home/donceykong/Desktop/ARPG/projects/OSM-BKI-FULL/CENet_OG/ce_net/config/data_cfg_mcd.yaml
 
 training:
-  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_style_EDL
+  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_terrain_ntu_tuhh_EDL
   model_name: cenet_mcd-512-EDL
   use_progressive_growing: True
 
+  # Range-image dims used during training. The same target shape is applied
+  # to every sensor group so all scans batch into a uniform tensor. Persisted
+  # to model_config.yaml at train time and reused by inference.
   model_configs:
     cenet_mcd-512-EDL:
-      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENetEL/CENet/ce_net/config/arch/train/cenet_mcd-512-EDL.yaml
+      arch_config: /home/donceykong/Desktop/ARPG/projects/OSM-BKI-FULL/CENet_OG/ce_net/config/arch/train/cenet_mcd-512-EDL.yaml
       model_name: cenet_mcd-512-EDL
+      img_width: 512
+      img_height: 64
       pretrained_model_path:
+
     cenet_mcd-1024-EDL:
-      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENetEL/CENet/ce_net/config/arch/train/cenet_mcd-1024p-EDL.yaml
+      arch_config: /home/donceykong/Desktop/ARPG/projects/OSM-BKI-FULL/CENet_OG/ce_net/config/arch/train/cenet_mcd-1024p-EDL.yaml
       model_name: cenet_mcd-1024-EDL
-      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_style_EDL/cenet_mcd-512-EDL
+      img_width: 1024
+      img_height: 64
+      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_terrain_ntu_tuhh_EDL/cenet_mcd-512-EDL
 
     cenet_mcd-2048-EDL:
-      arch_config: /home/donceykong/Desktop/ARPG/projects/fall_2024/OSM-AS-A-PRIOR-FULL/CENetEL/CENet/ce_net/config/arch/train/cenet_mcd-2048p-EDL.yaml
+      arch_config: /home/donceykong/Desktop/ARPG/projects/OSM-BKI-FULL/CENet_OG/ce_net/config/arch/train/cenet_mcd-2048p-EDL.yaml
       model_name: cenet_mcd-2048-EDL
-      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_style_EDL/cenet_mcd-1024-EDL
+      img_width: 2048
+      img_height: 64
+      pretrained_model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_terrain_ntu_tuhh_EDL/cenet_mcd-1024-EDL

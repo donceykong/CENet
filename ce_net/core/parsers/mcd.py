@@ -20,72 +20,156 @@ EXTENSIONS_SCAN = [".bin"]
 EXTENSIONS_LABEL = [".bin"]
 
 
-def get_mcd_split_from_sequences_and_ratios(root, sequences, split_ratios, seed=1024):
-    """
-    Collect all scan/label file pairs from the given sequences under root,
-    shuffle with seed, and split into train/valid/test by split_ratios.
+def _collect_scan_label_pairs(root, sequences):
+    """Return aligned (scan_files, label_files) for the given sequence dirs.
 
-    Args:
-        root: dataset root (e.g. /path/to/MCD)
-        sequences: list of sequence names (e.g. ["kth_day_06", "kth_day_10"])
-        split_ratios: [train_ratio, valid_ratio, test_ratio], e.g. [0.8, 0.1, 0.1]
-
-    Returns:
-        dict with keys "train", "valid", "test". Each value is
-        (list of scan paths, list of label paths).
+    Sequence paths are relative to `root` and may contain subdirs (e.g.
+    "tuhh/tuhh_day_02"). Only scans that have a matching label file are
+    included; the lists are sorted by scan path.
     """
-    train_r, valid_r, test_r = split_ratios
     scan_files = []
     label_files = []
     for seq in sequences:
         scan_path = os.path.join(root, seq, "lidar_bin", "data")
-        label_path = os.path.join(root, seq, "gt_labels")
-        if not os.path.isdir(label_path) or not os.path.isdir(scan_path):
+        label_path = os.path.join(root, seq, "gt_labels_terrain")
+        if not os.path.isdir(scan_path) or not os.path.isdir(label_path):
+            print(f"[MCD] skipping {seq}: missing scan or label dir under {root}")
             continue
-        label_list = [
-            os.path.join(label_path, f)
+        label_bases = {
+            os.path.splitext(f)[0]
             for f in os.listdir(label_path)
             if is_label(f)
-        ]
-        label_bases = {os.path.splitext(os.path.basename(f))[0] for f in label_list}
-        for f in os.listdir(scan_path):
+        }
+        for f in sorted(os.listdir(scan_path)):
             if not is_scan(f):
                 continue
             base = os.path.splitext(f)[0]
             if base not in label_bases:
                 continue
             scan_files.append(os.path.join(scan_path, f))
-            label_files.append(os.path.join(label_path, f))
-    # sort so scan/label stay aligned
+            label_files.append(os.path.join(label_path, f"{base}.bin"))
     pairs = list(zip(scan_files, label_files))
     pairs.sort(key=lambda x: x[0])
-    scan_files = [p[0] for p in pairs]
-    label_files = [p[1] for p in pairs]
-    n = len(scan_files)
-    if n == 0:
-        return {"train": ([], []), "valid": ([], []), "test": ([], [])}
-    indices = list(range(n))
-    random.seed(seed)
-    random.shuffle(indices)
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
+def _split_indices(n, split_ratios):
+    train_r, valid_r, _ = split_ratios
     n_train = int(round(n * train_r))
     n_valid = int(round(n * valid_r))
     n_test = n - n_train - n_valid
     if n_test < 0:
         n_test = 0
         n_valid = n - n_train
-    i0, i1 = 0, n_train
-    i2 = n_train + n_valid
-    train_scans = [scan_files[i] for i in indices[i0:i1]]
-    train_labels = [label_files[i] for i in indices[i0:i1]]
-    valid_scans = [scan_files[i] for i in indices[i1:i2]]
-    valid_labels = [label_files[i] for i in indices[i1:i2]]
-    test_scans = [scan_files[i] for i in indices[i2:]]
-    test_labels = [label_files[i] for i in indices[i2:]]
-    return {
-        "train": (train_scans, train_labels),
-        "valid": (valid_scans, valid_labels),
-        "test": (test_scans, test_labels),
-    }
+    return n_train, n_valid, n_test
+
+
+def split_mcd_sensor_groups(root, sensor_groups, split_ratios, seed=1024):
+    """Build per-split MCD shards, one per sensor group.
+
+    Args:
+        root: dataset root (e.g. /media/.../mcd).
+        sensor_groups: output of `materialize_sensor_groups` — each entry has
+            keys "sensor_name", "sensor" (full dict), "sequences".
+        split_ratios: [train_r, valid_r, test_r].
+        seed: shuffle seed (deterministic across runs).
+
+    Returns:
+        {
+          "train": [{"sensor_name", "sensor", "scan_files", "label_files"}, ...],
+          "valid": [...],
+          "test":  [...],
+        }
+        Each split entry corresponds to one sensor group; downstream code
+        builds one MCD dataset per entry and concatenates them.
+    """
+    rng = random.Random(seed)
+    splits = {"train": [], "valid": [], "test": []}
+    for grp in sensor_groups:
+        scans, labels = _collect_scan_label_pairs(root, grp["sequences"])
+        n = len(scans)
+        if n == 0:
+            print(
+                f"[MCD] sensor group '{grp['sensor_name']}' has 0 valid scans; skipping."
+            )
+            continue
+        idx = list(range(n))
+        rng.shuffle(idx)
+        n_train, n_valid, _ = _split_indices(n, split_ratios)
+        i0, i1, i2 = 0, n_train, n_train + n_valid
+        for split_name, lo, hi in (
+            ("train", i0, i1),
+            ("valid", i1, i2),
+            ("test", i2, n),
+        ):
+            splits[split_name].append(
+                {
+                    "sensor_name": grp["sensor_name"],
+                    "sensor": grp["sensor"],
+                    "scan_files": [scans[k] for k in idx[lo:hi]],
+                    "label_files": [labels[k] for k in idx[lo:hi]],
+                }
+            )
+    return splits
+
+
+def build_mcd_inference_shards(root, sensor_groups, sequences=None):
+    """Build per-sequence inference shards, each tagged with its sensor.
+
+    If `sequences` is provided, only those sequences are emitted and their
+    sensor is looked up in `sensor_groups`. Otherwise every sequence in
+    `sensor_groups` is included.
+
+    Returns: list of dicts with keys
+        {"seq", "sensor_name", "sensor", "scan_files", "label_files"}
+    Inference doesn't need ground-truth labels; `label_files` mirrors
+    `scan_files` so the existing MCD dataset wrapper can be reused with
+    `gt=False`.
+    """
+    seq_to_group = {}
+    for grp in sensor_groups:
+        for seq in grp["sequences"]:
+            seq_to_group[seq] = grp
+
+    if sequences is None:
+        ordered = [
+            (seq, grp)
+            for grp in sensor_groups
+            for seq in grp["sequences"]
+        ]
+    else:
+        ordered = []
+        for seq in sequences:
+            if seq not in seq_to_group:
+                raise KeyError(
+                    f"Inference sequence '{seq}' is not listed in any "
+                    f"sensor_groups entry of data_cfg."
+                )
+            ordered.append((seq, seq_to_group[seq]))
+
+    shards = []
+    for seq, grp in ordered:
+        scan_path = os.path.join(root, seq, "lidar_bin", "data")
+        if not os.path.isdir(scan_path):
+            print(f"[MCD] skipping inference seq '{seq}': missing {scan_path}")
+            continue
+        scan_files = [
+            os.path.join(scan_path, f)
+            for f in sorted(os.listdir(scan_path))
+            if is_scan(f)
+        ]
+        if not scan_files:
+            continue
+        shards.append(
+            {
+                "seq": seq,
+                "sensor_name": grp["sensor_name"],
+                "sensor": grp["sensor"],
+                "scan_files": scan_files,
+                "label_files": list(scan_files),  # placeholder; gt=False
+            }
+        )
+    return shards
 
 
 def is_scan(filename):
@@ -115,6 +199,7 @@ class MCD(Dataset):
         # save deats
         self.root = os.path.join(root)
         self.seq = seq
+        print(f"seq: {self.seq}")
         self.labels = labels    
         self.color_map = color_map
         self.learning_map = learning_map
@@ -168,7 +253,7 @@ class MCD(Dataset):
 
             scan_path = os.path.join(self.root, self.seq, "lidar_bin/data")
             print(f"scan_path: {scan_path}")
-            label_path = os.path.join(self.root, self.seq, "gt_labels")
+            label_path = os.path.join(self.root, self.seq, "gt_labels_terrain")
             print(f"label_path: {label_path}")
 
             label_files = [
@@ -309,11 +394,13 @@ class MCD(Dataset):
         proj = (proj - img_means) / img_stds
         proj = proj * proj_mask.float()
 
-        # get name and sequence
-        path_norm = os.path.normpath(scan_file)
-        path_split = path_norm.split(os.sep)
-        path_seq = path_split[-4]
-        path_name = path_split[-1].replace(".bin", ".bin")
+        # path_seq is the sequence's path relative to the dataset root
+        # (e.g. "tuhh/tuhh_day_02"), so inference can write outputs alongside
+        # the original scans regardless of nesting depth.
+        rel = os.path.relpath(os.path.normpath(scan_file), self.root)
+        rel_parts = rel.split(os.sep)
+        path_seq = os.sep.join(rel_parts[:-3]) if len(rel_parts) > 3 else rel_parts[0]
+        path_name = rel_parts[-1]
 
         # return
         return (
