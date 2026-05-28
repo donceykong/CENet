@@ -1,0 +1,10 @@
+# Velodyne HDL-64E (KITTI / KITTI-360 / SemanticKITTI). Asymmetric vertical
+# FOV: nominally +2.0 / -24.8, but +3.0 / -25.0 is the convention used by
+# SalsaNext / RangeNet++ / CENet's own SemKITTI/KITTI-360 configs and keeps
+# headroom for the noisier upper beams. Range-image width/height are stamped
+# from the model's persisted model_config.yaml at inference time.
+sensor:
+  name: "velodyne_hdl64"
+  type: "spherical"
+  fov_up: 3.0
+  fov_down: -25.0

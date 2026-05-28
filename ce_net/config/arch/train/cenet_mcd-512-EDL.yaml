@@ -9,15 +9,15 @@ train:
   evidential:        #  when evidential_loss: True
     unc_act: "exp"    #  "exp" | "relu" | "softplus"
     unc_type: "log"  #  "log" | "digamma"
-    kl_strength: 0.01
+    kl_strength: 0.1      # EvSemMap argparser default; their published 0.5 + our higher LR was overshooting
     ohem: null       #  null or float in (0,1) for OHEM
   aux_loss: True
   lamda: 1.0
   scheduler: "consine"  # "consine" or "decay"
-  max_epochs: 100
+  max_epochs: 100       # matches EvSemMap from-scratch run; 1024p/2048p stages stay at 30 (fine-tunes)
   consine:
     min_lr: 0.0001
-    max_lr: 0.001
+    max_lr: 0.0002        # matches EvSemMap l_rate=2e-4 (constant LR due to scheduler bug — see trainer_wb.py:284)
     first_cycle: 50
     cycle: 1
     wup_epochs: 1
@@ -28,7 +28,7 @@ train:
     lr_decay: 0.99       # learning rate decay per epoch after initial cycle (from min lr)
   momentum: 0.9          # sgd momentum
   w_decay: 0.0001        # weight decay
-  batch_size: 6          # batch size (was at 6 initially)
+  batch_size: 12         # 6 → 12; halves grad variance. EvSemMap uses 24 — bump to 24 if 2048 stage fits.
   report_batch: 100      # every x batches, report loss
   report_epoch: 1        # every x epochs, report validation set
   epsilon_w: 0.001       # class weight w = 1 / (content + epsilon_w)

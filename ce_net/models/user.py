@@ -158,7 +158,15 @@ class User:
             self.model.return_logits = True
             from ce_net.models.losses.evidential_loss import EvidentialLossCal
             unc_args = self.ARCH["train"].get("evidential", {"unc_act": "exp", "unc_type": "log", "kl_strength": 0.5, "ohem": None})
-            self.evidential_loss_cal = EvidentialLossCal(unc_args=unc_args, void_index=0, max_epoch=1, writer=None)
+            # Inference only calls logit_to_alpha; ignore_index/max_epoch are
+            # unused but kept consistent with the trainer-side API.
+            ignore_classes = [int(c) for c, ig in self.DATA.get("learning_ignore", {}).items() if ig]
+            self.evidential_loss_cal = EvidentialLossCal(
+                unc_args=unc_args,
+                ignore_index=ignore_classes,
+                max_epoch=1,
+                writer=None,
+            )
             print("Evidential inference: uncertainty (vacuity) will be saved in confidence_scores (higher = more uncertain).")
         else:
             self.evidential_loss_cal = None

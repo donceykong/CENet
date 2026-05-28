@@ -15,7 +15,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ce_net.models.user import User
 from ce_net import CONFIG_DIR
 from ce_net.core.parsers.mcd import build_mcd_inference_shards
-from ce_net.utils.sensor import materialize_sensor_groups
+from ce_net.utils.sensor import load_sensor, materialize_sensor_groups
 
 def load_yaml(config_path):
     with open(config_path, "r") as file:
@@ -142,6 +142,23 @@ if __name__ == "__main__":
         DATA["relative_infer_dir"] = relative_infer_dir
     elif FLAGS.dataset_name == "KITTI-360":
         DATA["relative_infer_dir"] = relative_infer_dir
+        # Cross-dataset inference: MCD-trained model's arch_cfg has
+        # dataset.sensor=None (nulled at train time), so load the Velodyne
+        # sensor from data_cfg.sensor_config and stamp the persisted img dims.
+        model_cfg_path = os.path.join(FLAGS.model, "model_config.yaml")
+        if not os.path.isfile(model_cfg_path):
+            print(f"Missing {model_cfg_path}; re-train so img dims are persisted.")
+            quit()
+        model_cfg = yaml.safe_load(open(model_cfg_path, "r"))
+        sensor_ref = DATA.get("sensor_config")
+        if sensor_ref is None:
+            print("data_cfg is missing 'sensor_config' (required for KITTI-360 inference).")
+            quit()
+        ARCH.setdefault("dataset", {})["sensor"] = load_sensor(
+            sensor_ref, model_cfg["img_width"], model_cfg["img_height"]
+        )
+        print(f"  KITTI-360 sensor: {sensor_ref} @ "
+              f"{model_cfg['img_height']}x{model_cfg['img_width']} -> {ARCH['dataset']['sensor']}")
 
     # create log folder for each sequence
     try:

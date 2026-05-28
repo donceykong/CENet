@@ -12,12 +12,13 @@ import torch.optim as optim
 from matplotlib import pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-import wandb
+from aim import Run
 from torch.optim.lr_scheduler import CosineAnnealingLR
 # Internal
 from ce_net.utils.avgmeter import *
 from ce_net.models.sync_batchnorm.batchnorm import convert_model
 from ce_net.models.ioueval import *
+from ce_net.models.ece_eval import EceMeter
 
 # Loss function(s)
 from ce_net.models.losses.Lovasz_Softmax import Lovasz_softmax
@@ -166,29 +167,38 @@ class Trainer:
         )
         self.tb_logger = SummaryWriter(log_dir=self.log, flush_secs=20)
 
-        # Initialize Weights & Biases
-        wandb_api_key = os.environ.get("WANDB_API_KEY")
-        if wandb_api_key:
-            wandb.login()
-            # Initialize wandb run
-            wandb.init(
-                project="lidar2osm",
-                name=f"train_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                config={
-                    "dataset": dataset_name,
-                    "architecture": self.ARCH["train"]["pipeline"],
-                    "batch_size": self.ARCH["train"]["batch_size"],
-                    "max_epochs": self.ARCH["train"]["max_epochs"],
-                    "learning_rate": self.ARCH["train"]["decay"]["lr"] if "decay" in self.ARCH["train"] else self.ARCH["train"].get("consine", {}).get("min_lr", "N/A"),
-                    "aux_loss": self.ARCH["train"]["aux_loss"],
-                    "num_classes": self.parser.get_n_classes(),
-                },
-                dir=self.log,
+        # Initialize Aim run. Logs to the .aim repo at the project root
+        # (Aim walks up from cwd looking for it). Each progressive-growing
+        # stage gets its own run; tagged so they sort together in the UI.
+        try:
+            # `system_tracking_interval=10` samples CPU/GPU/memory every 10s
+            # using a windowed average — much more representative than the
+            # default (which can read a misleading ~100% on GIL-locked Python
+            # loops). Overhead is <0.01% of training time.
+            self.run = Run(experiment="lidar2osm", system_tracking_interval=10)
+            self.run.name = (
+                f"{os.path.basename(self.log) or 'run'}_"
+                f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
             )
-            print("Weights & Biases logging initialized")
-        else:
-            print("Warning: WANDB_API_KEY not found in environment. Wandb logging disabled.")
-            wandb.init(mode="disabled")  # Disable wandb if no API key
+            self.run["hparams"] = {
+                "dataset": dataset_name,
+                "architecture": self.ARCH["train"]["pipeline"],
+                "batch_size": self.ARCH["train"]["batch_size"],
+                "max_epochs": self.ARCH["train"]["max_epochs"],
+                "learning_rate": (
+                    self.ARCH["train"]["decay"]["lr"] if "decay" in self.ARCH["train"]
+                    else self.ARCH["train"].get("consine", {}).get("min_lr", None)
+                ),
+                "aux_loss": self.ARCH["train"]["aux_loss"],
+                "num_classes": self.parser.get_n_classes(),
+                "log_dir": self.log,
+                "evidential_loss": self.ARCH["train"].get("evidential_loss", False),
+                "kl_strength": self.ARCH["train"].get("evidential", {}).get("kl_strength"),
+            }
+            print(f"Aim run initialised: {self.run.name} (hash={self.run.hash})")
+        except Exception as e:
+            print(f"Aim init failed ({e}); metrics will not be tracked.")
+            self.run = None
 
         # GPU?
         self.gpu = False
@@ -218,9 +228,17 @@ class Trainer:
             unc_args = self.ARCH["train"].get("evidential", {
                 "unc_act": "exp", "unc_type": "log", "kl_strength": 0.5, "ohem": None
             })
+            # Pull the ignore set from data_cfg.learning_ignore (e.g. MCD class
+            # 11 = "noise"). Class 0 isn't here for MCD (0 = "barrier"), so
+            # empty-range-image pixels are masked via proj_mask in the loss
+            # rather than by hijacking the ignore index.
+            ignore_classes = [
+                int(c) for c, ig in self.DATA.get("learning_ignore", {}).items() if ig
+            ]
+            print(f"[EDL] ignore_classes from learning_ignore: {ignore_classes}")
             self.evidential_loss_cal = EvidentialLossCal(
                 unc_args=unc_args,
-                void_index=0,
+                ignore_index=ignore_classes,
                 max_epoch=self.ARCH["train"]["max_epochs"],
                 writer=self.tb_logger,
             )
@@ -547,17 +565,21 @@ class Trainer:
                 imgs=rand_img,
             )
             
-            # Log epoch-level summary to wandb
-            wandb.log({
-                "epoch/train_loss": self.info["train_loss"],
-                "epoch/train_accuracy": self.info["train_acc"],
-                "epoch/train_iou": self.info["train_iou"],
-                "epoch/valid_loss": self.info["valid_loss"],
-                "epoch/valid_accuracy": self.info["valid_acc"],
-                "epoch/valid_iou": self.info["valid_iou"],
-                "epoch/best_train_iou": self.info["best_train_iou"],
-                "epoch/best_val_iou": self.info["best_val_iou"],
-            }, step=epoch)
+            # Log epoch-level summary to Aim.
+            if self.run is not None:
+                _epoch_step = (epoch + 1) * self.parser.get_train_size()
+                _epoch_metrics = {
+                    "epoch/train_loss": self.info["train_loss"],
+                    "epoch/train_accuracy": self.info["train_acc"],
+                    "epoch/train_iou": self.info["train_iou"],
+                    "epoch/valid_loss": self.info["valid_loss"],
+                    "epoch/valid_accuracy": self.info["valid_acc"],
+                    "epoch/valid_iou": self.info["valid_iou"],
+                    "epoch/best_train_iou": self.info["best_train_iou"],
+                    "epoch/best_val_iou": self.info["best_val_iou"],
+                }
+                for _name, _val in _epoch_metrics.items():
+                    self.run.track(_val, name=_name, step=_epoch_step, epoch=epoch)
 
             save_to_log(
                 self.log,
@@ -568,7 +590,8 @@ class Trainer:
         save_to_log(
             self.log, "log.txt", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         )
-        wandb.finish()
+        if self.run is not None:
+            self.run.close()
         return
 
 
@@ -623,6 +646,7 @@ class Trainer:
 
             if not self.multi_gpu and self.gpu:
                 in_vol = in_vol.cuda()
+                proj_mask = proj_mask.cuda()
             if self.gpu:
                 proj_labels = proj_labels.cuda().long()
 
@@ -649,49 +673,45 @@ class Trainer:
 
                 if self.ARCH["train"]["aux_loss"]:
                     [output, z2, z4, z8] = model(in_vol)
-                    lamda = self.ARCH["train"]["lamda"]
-                    if self.use_evidential:
-                        edl_loss = self.evidential_loss_cal.loss(output, proj_labels, i, epoch)
-                        alpha = self.evidential_loss_cal.logit_to_alpha(output)
-                        probs_main = alpha / alpha.sum(dim=1, keepdim=True)
-                        bdlosss = (
-                            self.bd(probs_main, proj_labels.long())
-                            + lamda * self.bd(z2, proj_labels.long())
-                            + lamda * self.bd(z4, proj_labels.long())
-                            + lamda * self.bd(z8, proj_labels.long())
-                        )
-                        loss_m0 = edl_loss + 1.5 * self.ls(probs_main, proj_labels.long())
-                        loss_m2 = criterion(torch.log(z2.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z2, proj_labels.long())
-                        loss_m4 = criterion(torch.log(z4.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z4, proj_labels.long())
-                        loss_m8 = criterion(torch.log(z8.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z8, proj_labels.long())
-                        loss_m = loss_m0 + lamda * loss_m2 + lamda * loss_m4 + lamda * loss_m8 + bdlosss
-                    else:
-                        bdlosss = (
-                            self.bd(output, proj_labels.long())
-                            + lamda * self.bd(z2, proj_labels.long())
-                            + lamda * self.bd(z4, proj_labels.long())
-                            + lamda * self.bd(z8, proj_labels.long())
-                        )
-                        loss_m0 = criterion(torch.log(output.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(output, proj_labels.long())
-                        loss_m2 = criterion(torch.log(z2.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z2, proj_labels.long())
-                        loss_m4 = criterion(torch.log(z4.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z4, proj_labels.long())
-                        loss_m8 = criterion(torch.log(z8.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z8, proj_labels.long())
-                        loss_m = loss_m0 + lamda * loss_m2 + lamda * loss_m4 + lamda * loss_m8 + bdlosss
                 else:
                     output = model(in_vol)
-                    if self.use_evidential:
-                        edl_loss = self.evidential_loss_cal.loss(output, proj_labels, i, epoch)
-                        alpha = self.evidential_loss_cal.logit_to_alpha(output)
-                        probs = alpha / alpha.sum(dim=1, keepdim=True)
-                        bdlosss = self.bd(probs, proj_labels.long())
-                        loss_m = edl_loss + 1.5 * self.ls(probs, proj_labels.long()) + bdlosss
-                    else:
-                        bdlosss = self.bd(output, proj_labels.long())
-                        loss_m = (
-                            criterion(torch.log(output.clamp(min=1e-8)), proj_labels)
-                            + 1.5 * self.ls(output, proj_labels.long())
-                            + bdlosss
-                        )
+
+                if self.use_evidential:
+                    # Pure EDL like EvSemMap (unc_seg_models.py:24-33): the
+                    # evidential loss is the *entire* segmentation loss. No
+                    # Lovasz / boundary / aux-CE — they're softmax-style
+                    # objectives that fight the evidence calibration. The
+                    # log/digamma EDL term is itself a classification loss
+                    # (Bayes risk under Dir(alpha)), so accuracy comes from
+                    # it directly; KL only regularises the wrong classes.
+                    loss_m = self.evidential_loss_cal.loss(
+                        output,
+                        proj_labels,
+                        proj_mask=proj_mask,
+                        curr_iter=i,
+                        curr_epoch=epoch,
+                    )
+                    bdlosss = torch.zeros((), device=loss_m.device)  # legacy meter slot
+                elif self.ARCH["train"]["aux_loss"]:
+                    lamda = self.ARCH["train"]["lamda"]
+                    bdlosss = (
+                        self.bd(output, proj_labels.long())
+                        + lamda * self.bd(z2, proj_labels.long())
+                        + lamda * self.bd(z4, proj_labels.long())
+                        + lamda * self.bd(z8, proj_labels.long())
+                    )
+                    loss_m0 = criterion(torch.log(output.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(output, proj_labels.long())
+                    loss_m2 = criterion(torch.log(z2.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z2, proj_labels.long())
+                    loss_m4 = criterion(torch.log(z4.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z4, proj_labels.long())
+                    loss_m8 = criterion(torch.log(z8.clamp(min=1e-8)), proj_labels) + 1.5 * self.ls(z8, proj_labels.long())
+                    loss_m = loss_m0 + lamda * loss_m2 + lamda * loss_m4 + lamda * loss_m8 + bdlosss
+                else:
+                    bdlosss = self.bd(output, proj_labels.long())
+                    loss_m = (
+                        criterion(torch.log(output.clamp(min=1e-8)), proj_labels)
+                        + 1.5 * self.ls(output, proj_labels.long())
+                        + bdlosss
+                    )
 
             optimizer.zero_grad()
 
@@ -794,8 +814,8 @@ class Trainer:
                     ),
                 )
                 
-                # Log to wandb
-                wandb_train_dict = {
+                # Per-iter training metrics for Aim.
+                train_metrics = {
                     "train/loss": losses.val,
                     "train/loss_avg": losses.avg,
                     "train/accuracy": acc.val,
@@ -809,10 +829,13 @@ class Trainer:
                     "train/batch": i,
                 }
                 if self.use_evidential:
-                    wandb_train_dict["train/edl_loss"] = self.evidential_loss_cal.last_edl_loss
-                    wandb_train_dict["train/kl_loss"] = self.evidential_loss_cal.last_kl_loss
-                    wandb_train_dict["train/kl_coef"] = self.evidential_loss_cal.last_kl_coef
-                wandb.log(wandb_train_dict, step=epoch * len(train_loader) + i)
+                    train_metrics["train/edl_loss"] = self.evidential_loss_cal.last_edl_loss
+                    train_metrics["train/kl_loss"] = self.evidential_loss_cal.last_kl_loss
+                    train_metrics["train/kl_coef"] = self.evidential_loss_cal.last_kl_coef
+                if self.run is not None:
+                    _iter_step = epoch * len(train_loader) + i
+                    for _name, _val in train_metrics.items():
+                        self.run.track(_val, name=_name, step=_iter_step, epoch=epoch)
             # step scheduler
             scheduler.step()
         return acc.avg, iou.avg, losses.avg
@@ -826,6 +849,10 @@ class Trainer:
         acc = AverageMeter()
         iou = AverageMeter()
         rand_imgs = []
+        # ECE/MCE over valid (non-empty, non-ignored) pixels — confidence is
+        # `1 - K/S` for EDL (per EvSemMap) or max softmax prob otherwise.
+        ece_meter_10 = EceMeter(n_bins=10, device=self.device)
+        ece_meter_20 = EceMeter(n_bins=20, device=self.device)
 
         # switch to evaluate mode
         model.eval()
@@ -867,7 +894,13 @@ class Trainer:
                     output = model(in_vol)
                 if self.use_evidential:
                     alpha = self.evidential_loss_cal.logit_to_alpha(output)
-                    output = alpha / alpha.sum(dim=1, keepdim=True)
+                    S = alpha.sum(dim=1)                      # [B,H,W]
+                    n_classes_out = alpha.shape[1]
+                    output = alpha / S.unsqueeze(1)           # predictive probs
+                    # EvSemMap-style certainty (unc_seg_models.py:45): 1 - K/S.
+                    confidence = (1.0 - n_classes_out / S.clamp(min=1e-8)).clamp(0.0, 1.0)
+                else:
+                    confidence, _ = output.max(dim=1)         # max softmax prob
 
                 log_out = torch.log(output.clamp(min=1e-8))
                 jacc = self.ls(output, proj_labels)
@@ -881,6 +914,20 @@ class Trainer:
                 jaccs.update(jacc.mean().item(), in_vol.size(0))
 
                 wces.update(wce.mean().item(), in_vol.size(0))
+
+                # ECE update — only over valid pixels (drop empty-range pixels
+                # via proj_mask and ignored classes via self.ignore_class).
+                # `.to(proj_labels.device)` keeps this correct under multi-GPU,
+                # where the upstream guard skips proj_mask's .cuda() move.
+                correct = (argmax == proj_labels)
+                if proj_mask is not None:
+                    valid = proj_mask.to(proj_labels.device).bool()
+                else:
+                    valid = torch.ones_like(proj_labels, dtype=torch.bool)
+                for ic in self.ignore_class:
+                    valid = valid & (proj_labels != ic)
+                ece_meter_10.add(confidence, correct, valid_mask=valid)
+                ece_meter_20.add(confidence, correct, valid_mask=valid)
 
                 if save_scans:
                     # get the first scan in batch and project points
@@ -938,13 +985,35 @@ class Trainer:
                 ),
             )
             
-            # Log validation metrics to wandb
-            wandb_log_dict = {
+            # Calibration: ECE/MCE at 10- and 20-bin (matches EvSemMap's
+            # optimized_ece_with_bin reporting). Reflects how well the
+            # confidence (or `1 - K/S` for EDL) tracks empirical accuracy.
+            ece10, mce10 = ece_meter_10.compute()
+            ece20, mce20 = ece_meter_20.compute()
+            n_ece = ece_meter_10.n_samples()
+            print(
+                f"Calibration over {n_ece:,} valid pixels:\n"
+                f"  ECE@10 {ece10:.4f}  MCE@10 {mce10:.4f}\n"
+                f"  ECE@20 {ece20:.4f}  MCE@20 {mce20:.4f}"
+            )
+            save_to_log(
+                self.log,
+                "log.txt",
+                f"Calibration: ECE@10 {ece10:.4f} MCE@10 {mce10:.4f} "
+                f"ECE@20 {ece20:.4f} MCE@20 {mce20:.4f} (n={n_ece})",
+            )
+
+            # End-of-validation metrics for Aim.
+            val_metrics = {
                 "validation/loss": losses.avg,
                 "validation/jaccard": jaccs.avg,
                 "validation/wce": wces.avg,
                 "validation/accuracy": acc.avg,
                 "validation/iou": iou.avg,
+                "validation/ece_bin10": ece10,
+                "validation/mce_bin10": mce10,
+                "validation/ece_bin20": ece20,
+                "validation/mce_bin20": mce20,
             }
             
             # print also classwise
@@ -962,13 +1031,14 @@ class Trainer:
                     ),
                 )
                 self.info["valid_classes/" + class_func(i)] = jacc
-                # Add class-wise IoU to wandb log
-                wandb_log_dict[f"validation/iou_class_{i}_{class_func(i)}"] = jacc
+                # Class-wise IoU into the same Aim val payload.
+                val_metrics[f"validation/iou_class_{i}_{class_func(i)}"] = jacc
             
-            # Log all validation metrics at once
-            # Use provided epoch or self.epoch, default to 0 if neither available
+            # Log all validation metrics to Aim.
             current_epoch = epoch if epoch is not None else (self.epoch if hasattr(self, 'epoch') else 0)
-            # Step should be after training for this epoch, so use epoch * train_size + train_size
-            wandb.log(wandb_log_dict, step=current_epoch * self.parser.get_train_size() + self.parser.get_train_size())
+            if self.run is not None:
+                _val_step = (current_epoch + 1) * self.parser.get_train_size()
+                for _name, _val in val_metrics.items():
+                    self.run.track(_val, name=_name, step=_val_step, epoch=current_epoch)
 
         return acc.avg, iou.avg, losses.avg, rand_imgs

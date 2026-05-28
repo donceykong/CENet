@@ -8,11 +8,9 @@ all sensors in a training run project to a single, batchable shape.
 
 from pathlib import Path
 from typing import Mapping, Union
-
 import yaml
 
 from ce_net import CONFIG_DIR
-
 
 SENSORS_DIR = CONFIG_DIR / "SENSORS"
 
