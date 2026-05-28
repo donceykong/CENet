@@ -175,7 +175,7 @@ class Trainer:
             # using a windowed average — much more representative than the
             # default (which can read a misleading ~100% on GIL-locked Python
             # loops). Overhead is <0.01% of training time.
-            self.run = Run(experiment="lidar2osm", system_tracking_interval=10)
+            self.run = Run(experiment="CENET-EDL", system_tracking_interval=10)
             self.run.name = (
                 f"{os.path.basename(self.log) or 'run'}_"
                 f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
