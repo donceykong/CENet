@@ -28,6 +28,25 @@ def is_label(filename):
     return any(filename.endswith(ext) for ext in EXTENSIONS_LABEL)
 
 
+def get_keyframe_scans(scan_files, label_files, keyframe_dist, perc_scans_to_use):
+    """Proportional, keyframe-spaced subset of ONE KITTI-360 sequence.
+
+    PLACEHOLDER — not yet implemented. KITTI-360 stores poses differently from
+    MCD (e.g. data_poses/<seq>/poses.txt or cam0_to_world.txt, frame-indexed
+    rather than an MCD-style num,t,x,y,z csv), so this needs its own pose
+    reader before reusing `ce_net.utils.keyframe.select_keyframe_indices` (the
+    selection logic is dataset-agnostic; only pose loading + scan->xyz mapping
+    differs).
+
+    See ce_net/core/parsers/mcd.py:get_keyframe_scans for the reference impl.
+    """
+    raise NotImplementedError(
+        "get_keyframe_scans not implemented for KITTI-360 yet; only MCD is "
+        "supported. Add KITTI-360's pose reader, then call "
+        "select_keyframe_indices."
+    )
+
+
 # def my_collate(batch):
 #     data = [item[0] for item in batch]
 #     project_mask = [item[1] for item in batch]

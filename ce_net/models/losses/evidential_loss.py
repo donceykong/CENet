@@ -6,8 +6,12 @@
 #     the EDL term and wastes KL pressure regularising empty-pixel Dirichlets.
 #   - `ignore_index` may be a list of classes (derived from data_cfg
 #     `learning_ignore`); EvSemMap only supported a single int.
-#   - Annealing schedule matches EvSemMap: `kl_strength * curr_epoch /
-#     max_epoch` (capped at 1.0 in case training exceeds max_epoch).
+#   - KL anneal window is configurable via `kl_warmup_epochs` (the EDL paper
+#     uses min(1.0, epoch/10)); when unset it falls back to annealing over the
+#     full max_epoch (EvSemMap-style), capped at 1.0.
+#   - `unc_type` supports the paper's three loss forms: "log" / "digamma"
+#     (Bayes risk under CE) and "mse" (Bayes risk under L2, Eq.5 — the form
+#     the paper reports as most stable).
 import torch
 import torch.nn.functional as F
 from math import ceil
@@ -18,6 +22,9 @@ class EvidentialLossCal:
         self.unc_act = unc_args.get("unc_act", "exp")
         self.unc_type = unc_args.get("unc_type", "log")
         self.kl_strength = unc_args.get("kl_strength", 0.5)
+        # KL anneal window in epochs. Paper uses min(1.0, epoch/10); null/0
+        # falls back to annealing over the full max_epoch (EvSemMap-style).
+        self.kl_warmup_epochs = unc_args.get("kl_warmup_epochs")
         self.ohem = unc_args.get("ohem")
         if self.unc_act == "exp":
             self.activation = lambda x: torch.exp(torch.clamp(x, -10, 10))
@@ -31,6 +38,10 @@ class EvidentialLossCal:
             self.unc_fn = torch.digamma
         elif self.unc_type == "log":
             self.unc_fn = torch.log
+        elif self.unc_type == "mse":
+            # Bayes-risk-under-L2 form (paper Eq.5); computed directly from
+            # alpha in loss(), so no log/digamma transform is needed.
+            self.unc_fn = None
         else:
             raise NotImplementedError(self.unc_type)
 
@@ -114,12 +125,25 @@ class EvidentialLossCal:
         alpha = self.logit_to_alpha(logits)
         alpha0 = torch.sum(alpha, dim=1, keepdim=True)
 
-        # Per-pixel evidential CE term (log or digamma form). Multiplying by
-        # valid_mask zeros out empty/ignored pixels before reduction.
-        per_pixel = torch.sum(
-            labels_1hot * (self.unc_fn(alpha0) - self.unc_fn(alpha)),
-            dim=1, keepdim=True,
-        )
+        # Per-pixel evidential term. Multiplying by valid_mask zeros out
+        # empty/ignored pixels before reduction.
+        if self.unc_type == "mse":
+            # Paper Eq.5 (Bayes risk under sum-of-squares), summed over classes:
+            #   L = Σ_k (y_k - p̂_k)^2  +  Σ_k p̂_k(1 - p̂_k)/(S + 1)
+            # with p̂ = alpha/S. err drives accuracy, var shrinks Dirichlet
+            # spread. On invalid pixels labels_1hot is already zeroed, and the
+            # valid_mask multiply below drops them entirely.
+            p_hat = alpha / alpha0
+            err = (labels_1hot - p_hat) ** 2
+            var = p_hat * (1.0 - p_hat) / (alpha0 + 1.0)
+            per_pixel = torch.sum(err + var, dim=1, keepdim=True)
+        else:
+            # log => Type II MLE; digamma => Bayes risk under CE. The one-hot
+            # mask picks out the true-class term.
+            per_pixel = torch.sum(
+                labels_1hot * (self.unc_fn(alpha0) - self.unc_fn(alpha)),
+                dim=1, keepdim=True,
+            )
         per_pixel = per_pixel * valid_mask.to(per_pixel.dtype)
 
         if self.ohem is not None:
@@ -142,9 +166,11 @@ class EvidentialLossCal:
         # (kl_alpha keeps alpha=1 on the true class so it isn't penalised).
         target_c = 1.0
         kl_alpha = (alpha - target_c) * (1 - labels_1hot) + target_c
-        # EvSemMap-style linear anneal, clamped at kl_strength so it doesn't
-        # overshoot if a stage runs past max_epoch.
-        kl_coef = self.kl_strength * min(1.0, max(0.0, float(curr_epoch)) / self.max_epoch)
+        # Linear KL anneal over `kl_warmup_epochs` (paper uses 10); when unset,
+        # anneal over the full run (EvSemMap-style). Clamped at kl_strength so
+        # it doesn't overshoot past the warmup window.
+        W = max(1, int(self.kl_warmup_epochs)) if self.kl_warmup_epochs else self.max_epoch
+        kl_coef = self.kl_strength * min(1.0, max(0.0, float(curr_epoch)) / W)
         loss_kl = self._compute_kl_loss(kl_alpha, valid_mask=valid_mask)
 
         if self.writer is not None:

@@ -8,8 +8,9 @@ train:
   evidential_loss: True   #  True to use evidential loss (EvSemMap-style)
   evidential:        #  when evidential_loss: True
     unc_act: "exp"    #  "exp" | "relu" | "softplus"
-    unc_type: "log"  #  "log" | "digamma"
+    unc_type: "log"  #  "log" | "digamma" | "mse" (paper Eq.5, recommended)
     kl_strength: 0.1
+    kl_warmup_epochs: null  # null => anneal over max_epochs; set e.g. 10 for paper-style warmup
     ohem: null       #  null or float in (0,1) for OHEM
   aux_loss: True
   lamda: 1.0

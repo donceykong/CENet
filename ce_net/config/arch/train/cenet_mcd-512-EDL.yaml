@@ -8,8 +8,9 @@ train:
   evidential_loss: True   #  True to use evidential loss (EvSemMap-style)
   evidential:        #  when evidential_loss: True
     unc_act: "exp"    #  "exp" | "relu" | "softplus"
-    unc_type: "log"  #  "log" | "digamma"
+    unc_type: "log"  #  "log" | "digamma" | "mse" (paper Eq.5, recommended)
     kl_strength: 0.1      # EvSemMap argparser default; their published 0.5 + our higher LR was overshooting
+    kl_warmup_epochs: 10  # paper's min(1.0, epoch/10); null => anneal over max_epochs (EvSemMap-style)
     ohem: null       #  null or float in (0,1) for OHEM
   aux_loss: True
   lamda: 1.0
@@ -28,7 +29,7 @@ train:
     lr_decay: 0.99       # learning rate decay per epoch after initial cycle (from min lr)
   momentum: 0.9          # sgd momentum
   w_decay: 0.0001        # weight decay
-  batch_size: 12         # 6 → 12; halves grad variance. EvSemMap uses 24 — bump to 24 if 2048 stage fits.
+  batch_size: 6          # lowered for the EDL ablation (log/mse × kl-warmup grid); was 12
   report_batch: 100      # every x batches, report loss
   report_epoch: 1        # every x epochs, report validation set
   epsilon_w: 0.001       # class weight w = 1 / (content + epsilon_w)

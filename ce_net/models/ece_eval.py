@@ -73,3 +73,73 @@ class EceMeter:
 
     def n_samples(self) -> int:
         return int(self.bin_count.sum())
+
+    def reliability_rejection_figure(self, title=None):
+        """Build an uncertainty-vs-accuracy figure from the accumulated bins.
+
+        Two panels:
+          (a) Reliability diagram — per-bin accuracy vs mean confidence, with
+              the y=x perfect-calibration reference.
+          (b) Rejection curve — accuracy of the *retained* pixels as the
+              uncertainty (= 1 - confidence) threshold tightens. This is the
+              EDL paper's Fig.2: if uncertainty is meaningful, dropping the
+              most-uncertain pixels should raise accuracy on what remains.
+
+        Returns a matplotlib Figure; the caller is responsible for saving /
+        logging / closing it. Returns None if no samples were accumulated.
+        """
+        import matplotlib
+        matplotlib.use("Agg")  # headless; training boxes have no display
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        count = self.bin_count.cpu().numpy()
+        if count.sum() == 0:
+            return None
+        correct = self.bin_correct.cpu().numpy()
+        conf_sum = self.bin_conf.cpu().numpy()
+        n = self.n_bins
+        centers = (np.arange(n) + 0.5) / n
+        nonempty = count > 0
+        acc = np.divide(correct, count, out=np.zeros_like(correct, dtype=float), where=nonempty)
+        conf = np.divide(conf_sum, count, out=centers.copy(), where=nonempty)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+
+        # (a) Reliability diagram
+        ax1.bar(centers, acc, width=1.0 / n, color="steelblue", alpha=0.85,
+                edgecolor="k", linewidth=0.3)
+        ax1.plot([0, 1], [0, 1], "--", color="gray", label="perfect calibration")
+        ax1.set_xlabel("confidence")
+        ax1.set_ylabel("accuracy")
+        ax1.set_xlim(0, 1)
+        ax1.set_ylim(0, 1)
+        ax1.set_title("Reliability diagram")
+        ax1.legend(loc="upper left", fontsize=8)
+
+        # (b) Rejection curve: include bins from low->high uncertainty
+        # (most->least confident) and track cumulative retained accuracy.
+        unc = 1.0 - conf
+        order = np.argsort(unc)  # ascending uncertainty
+        c_cnt = np.cumsum(count[order])
+        c_cor = np.cumsum(correct[order])
+        retained_acc = np.divide(c_cor, c_cnt, out=np.zeros_like(c_cor, dtype=float),
+                                 where=c_cnt > 0)
+        thr = unc[order]
+        total = float(count.sum())
+        overall_acc = float(correct.sum() / total) if total > 0 else 0.0
+        m = count[order] > 0  # drop empty bins for a clean line
+        ax2.plot(thr[m], retained_acc[m], "-o", color="darkorange", markersize=3)
+        ax2.axhline(overall_acc, ls="--", color="gray",
+                    label=f"all pixels ({overall_acc:.3f})")
+        ax2.set_xlabel("uncertainty threshold (retain pixels with u ≤ t)")
+        ax2.set_ylabel("accuracy of retained pixels")
+        ax2.set_xlim(0, 1)
+        ax2.set_ylim(0, 1.02)
+        ax2.set_title("Rejection curve")
+        ax2.legend(loc="lower right", fontsize=8)
+
+        if title:
+            fig.suptitle(title)
+        fig.tight_layout()
+        return fig

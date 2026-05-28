@@ -12,8 +12,9 @@ except ImportError:
 
 import numpy as np
 
-# Internal 
+# Internal
 from ce_net.core.pointcloud.laserscan import LaserScan, SemLaserScan
+from ce_net.utils.keyframe import select_keyframe_indices
 
 
 EXTENSIONS_SCAN = [".bin"]
@@ -178,6 +179,86 @@ def is_scan(filename):
 
 def is_label(filename):
     return any(filename.endswith(ext) for ext in EXTENSIONS_LABEL)
+
+
+def _scan_stem(path):
+    """Integer filename stem, e.g. '.../0000000013.bin' -> 13. This is the key
+    that links a scan to its row in pose_inW.csv (the `num` column)."""
+    return int(os.path.splitext(os.path.basename(path))[0])
+
+
+def _load_mcd_pose_xyz(pose_csv):
+    """Parse an MCD pose_inW.csv into {num(int): (x, y, z)} (world frame).
+
+    Columns: num,t,x,y,z,qx,qy,qz,qw  — `num` matches the scan filename stem.
+    """
+    poses = {}
+    with open(pose_csv) as f:
+        f.readline()  # skip header
+        for line in f:
+            parts = line.strip().split(",")
+            if len(parts) < 5:
+                continue
+            poses[int(float(parts[0]))] = (
+                float(parts[2]),
+                float(parts[3]),
+                float(parts[4]),
+            )
+    return poses
+
+
+def get_keyframe_scans(scan_files, label_files, keyframe_dist, perc_scans_to_use):
+    """Proportional, keyframe-spaced subset of ONE MCD sequence.
+
+    MCD stores world-frame poses per sequence in `<seq>/pose_inW.csv`, where
+    the `num` column equals the scan/label filename stem (e.g. num=13 <->
+    0000000013.bin). Distances are therefore metric metres in the world frame.
+
+    Selection keeps `quota = round(len(seq) * perc_scans_to_use)` scans spaced
+    by >= keyframe_dist (relaxing the spacing only if the run is too short to
+    fill the quota). Proportional (not even) so each sequence keeps its natural
+    weight in the training distribution.
+
+    Args:
+        scan_files, label_files: aligned lists for a SINGLE sequence (they must
+            share one pose_inW.csv). Re-sorted by stem internally.
+        keyframe_dist: minimum spacing in metres between kept scans.
+        perc_scans_to_use: fraction of this sequence to keep.
+
+    Returns:
+        (sel_scan_files, sel_label_files), sorted by stem.
+    """
+    if not scan_files:
+        return [], []
+
+    pairs = sorted(zip(scan_files, label_files), key=lambda sl: _scan_stem(sl[0]))
+
+    # Pose file: scans live at <seq_root>/lidar_bin/data/<stem>.bin, so the
+    # sequence root is three levels up.
+    seq_root = os.path.dirname(os.path.dirname(os.path.dirname(pairs[0][0])))
+    pose_csv = os.path.join(seq_root, "pose_inW.csv")
+    if not os.path.isfile(pose_csv):
+        print(f"[MCD keyframe] no pose file at {pose_csv}; keeping all scans.")
+        return [p[0] for p in pairs], [p[1] for p in pairs]
+
+    poses = _load_mcd_pose_xyz(pose_csv)
+
+    kept_pairs, positions, missing = [], [], 0
+    for scan, label in pairs:
+        xyz = poses.get(_scan_stem(scan))
+        if xyz is None:
+            missing += 1
+            continue
+        kept_pairs.append((scan, label))
+        positions.append(xyz)
+    if missing:
+        print(f"[MCD keyframe] {seq_root}: {missing} scans had no pose entry; skipped.")
+    if not kept_pairs:
+        return [], []
+
+    quota = max(1, int(round(len(kept_pairs) * perc_scans_to_use)))
+    idx = select_keyframe_indices(positions, keyframe_dist, quota)
+    return [kept_pairs[i][0] for i in idx], [kept_pairs[i][1] for i in idx]
 
 
 class MCD(Dataset):

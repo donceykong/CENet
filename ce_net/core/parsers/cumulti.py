@@ -28,6 +28,24 @@ def is_label(filename):
     return any(filename.endswith(ext) for ext in EXTENSIONS_LABEL)
 
 
+def get_keyframe_scans(scan_files, label_files, keyframe_dist, perc_scans_to_use):
+    """Proportional, keyframe-spaced subset of ONE CU-MULTI sequence.
+
+    PLACEHOLDER — not yet implemented. CU-MULTI scans live under
+    <env>/<robot>/lidar_bin/data; its per-robot pose format/location differs
+    from MCD's `pose_inW.csv`, so this needs its own pose reader before reusing
+    `ce_net.utils.keyframe.select_keyframe_indices` (the selection logic is
+    dataset-agnostic; only pose loading + scan->xyz mapping differs).
+
+    See ce_net/core/parsers/mcd.py:get_keyframe_scans for the reference impl.
+    """
+    raise NotImplementedError(
+        "get_keyframe_scans not implemented for CU-MULTI yet; only MCD is "
+        "supported. Add CU-MULTI's pose reader, then call "
+        "select_keyframe_indices."
+    )
+
+
 class CU_MULTI(Dataset):
     def __init__(
         self,

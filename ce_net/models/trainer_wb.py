@@ -12,7 +12,7 @@ import torch.optim as optim
 from matplotlib import pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from aim import Run
+import wandb
 from torch.optim.lr_scheduler import CosineAnnealingLR
 # Internal
 from ce_net.utils.avgmeter import *
@@ -167,37 +167,42 @@ class Trainer:
         )
         self.tb_logger = SummaryWriter(log_dir=self.log, flush_secs=20)
 
-        # Initialize Aim run. Logs to the .aim repo at the project root
-        # (Aim walks up from cwd looking for it). Each progressive-growing
-        # stage gets its own run; tagged so they sort together in the UI.
+        # Initialize Weights & Biases run. Each progressive-growing stage gets
+        # its own run. Requires `wandb login` (or WANDB_API_KEY) for the
+        # doal8589-doncey-albin account; any init failure falls back to
+        # self.run=None so training continues unlogged.
         try:
-            # `system_tracking_interval=10` samples CPU/GPU/memory every 10s
-            # using a windowed average — much more representative than the
-            # default (which can read a misleading ~100% on GIL-locked Python
-            # loops). Overhead is <0.01% of training time.
-            self.run = Run(experiment="CENET-EDL", system_tracking_interval=10)
-            self.run.name = (
-                f"{os.path.basename(self.log) or 'run'}_"
-                f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            )
-            self.run["hparams"] = {
-                "dataset": dataset_name,
-                "architecture": self.ARCH["train"]["pipeline"],
-                "batch_size": self.ARCH["train"]["batch_size"],
-                "max_epochs": self.ARCH["train"]["max_epochs"],
-                "learning_rate": (
-                    self.ARCH["train"]["decay"]["lr"] if "decay" in self.ARCH["train"]
-                    else self.ARCH["train"].get("consine", {}).get("min_lr", None)
+            self.run = wandb.init(
+                entity="doal8589-doncey-albin",
+                project="CENet_EDL",
+                name=(
+                    f"{os.path.basename(self.log) or 'run'}_"
+                    f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 ),
-                "aux_loss": self.ARCH["train"]["aux_loss"],
-                "num_classes": self.parser.get_n_classes(),
-                "log_dir": self.log,
-                "evidential_loss": self.ARCH["train"].get("evidential_loss", False),
-                "kl_strength": self.ARCH["train"].get("evidential", {}).get("kl_strength"),
-            }
-            print(f"Aim run initialised: {self.run.name} (hash={self.run.hash})")
+                dir=self.log,
+                config={
+                    "dataset": dataset_name,
+                    "architecture": self.ARCH["train"]["pipeline"],
+                    "batch_size": self.ARCH["train"]["batch_size"],
+                    "max_epochs": self.ARCH["train"]["max_epochs"],
+                    "learning_rate": (
+                        self.ARCH["train"]["decay"]["lr"] if "decay" in self.ARCH["train"]
+                        else self.ARCH["train"].get("consine", {}).get("min_lr", None)
+                    ),
+                    "aux_loss": self.ARCH["train"]["aux_loss"],
+                    "num_classes": self.parser.get_n_classes(),
+                    "log_dir": self.log,
+                    "evidential_loss": self.ARCH["train"].get("evidential_loss", False),
+                    "unc_type": self.ARCH["train"].get("evidential", {}).get("unc_type"),
+                    "kl_strength": self.ARCH["train"].get("evidential", {}).get("kl_strength"),
+                    "kl_warmup_epochs": self.ARCH["train"].get("evidential", {}).get("kl_warmup_epochs"),
+                    "keyframe_dist": self.ARCH["train"].get("keyframe_subset", {}).get("keyframe_dist"),
+                    "perc_scans_to_use": self.ARCH["train"].get("keyframe_subset", {}).get("perc_scans_to_use"),
+                },
+            )
+            print(f"W&B run initialised: {self.run.name}")
         except Exception as e:
-            print(f"Aim init failed ({e}); metrics will not be tracked.")
+            print(f"W&B init failed ({e}); metrics will not be tracked.")
             self.run = None
 
         # GPU?
@@ -511,7 +516,11 @@ class Trainer:
                 save_checkpoint(state, self.log, suffix="_train_best")
 
             print("Evaluating on validation set...")
-            if epoch % self.ARCH["train"]["report_epoch"] == 0:
+            # Plot the calibration figure on the final epoch (the "when
+            # finished" snapshot); force a validation pass there even if it
+            # wouldn't otherwise land on the report_epoch cadence.
+            is_last_epoch = epoch == self.ARCH["train"]["max_epochs"] - 1
+            if epoch % self.ARCH["train"]["report_epoch"] == 0 or is_last_epoch:
                 # evaluate on validation set
                 print("*" * 80)
                 acc, iou, loss, rand_img = self.validate(
@@ -523,6 +532,7 @@ class Trainer:
                     color_fn=self.parser.to_color,
                     save_scans=self.ARCH["train"]["save_scans"],
                     epoch=epoch,
+                    plot_calibration=is_last_epoch,
                 )
 
                 # update info
@@ -565,10 +575,10 @@ class Trainer:
                 imgs=rand_img,
             )
             
-            # Log epoch-level summary to Aim.
+            # Log epoch-level summary to W&B.
             if self.run is not None:
                 _epoch_step = (epoch + 1) * self.parser.get_train_size()
-                _epoch_metrics = {
+                self.run.log({
                     "epoch/train_loss": self.info["train_loss"],
                     "epoch/train_accuracy": self.info["train_acc"],
                     "epoch/train_iou": self.info["train_iou"],
@@ -577,9 +587,7 @@ class Trainer:
                     "epoch/valid_iou": self.info["valid_iou"],
                     "epoch/best_train_iou": self.info["best_train_iou"],
                     "epoch/best_val_iou": self.info["best_val_iou"],
-                }
-                for _name, _val in _epoch_metrics.items():
-                    self.run.track(_val, name=_name, step=_epoch_step, epoch=epoch)
+                }, step=_epoch_step)
 
             save_to_log(
                 self.log,
@@ -591,7 +599,7 @@ class Trainer:
             self.log, "log.txt", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         )
         if self.run is not None:
-            self.run.close()
+            self.run.finish()
         return
 
 
@@ -834,14 +842,54 @@ class Trainer:
                     train_metrics["train/kl_coef"] = self.evidential_loss_cal.last_kl_coef
                 if self.run is not None:
                     _iter_step = epoch * len(train_loader) + i
-                    for _name, _val in train_metrics.items():
-                        self.run.track(_val, name=_name, step=_iter_step, epoch=epoch)
+                    self.run.log(train_metrics, step=_iter_step)
             # step scheduler
             scheduler.step()
         return acc.avg, iou.avg, losses.avg
 
+    def _log_calibration_figure(self, ece_meter, epoch, val_iou):
+        """Build the uncertainty-vs-accuracy figure, save it under
+        <log>/calibration/, and upload it to Aim. Best-effort: any failure is
+        logged and swallowed so it never aborts training."""
+        try:
+            title = (
+                f"{os.path.basename(self.log)} | epoch {epoch} | "
+                f"val IoU {val_iou:.3f}"
+            )
+            fig = ece_meter.reliability_rejection_figure(title=title)
+        except Exception as e:
+            print(f"[calibration] figure build failed: {e}")
+            return
+        if fig is None:
+            print("[calibration] no samples accumulated; skipping figure")
+            return
+
+        cal_dir = os.path.join(self.log, "calibration")
+        os.makedirs(cal_dir, exist_ok=True)
+        png_path = os.path.join(cal_dir, f"epoch_{epoch}.png")
+        try:
+            fig.savefig(png_path, dpi=120)
+            print(f"[calibration] saved {png_path}")
+        except Exception as e:
+            print(f"[calibration] local save failed: {e}")
+
+        if self.run is not None:
+            try:
+                # Same step axis as the val/epoch metrics so W&B keeps a
+                # monotonic step counter (avoids "step < current" warnings).
+                _img_step = (epoch + 1) * self.parser.get_train_size()
+                self.run.log(
+                    {"calibration/reliability_rejection": wandb.Image(fig)},
+                    step=_img_step,
+                )
+            except Exception as e:
+                print(f"[calibration] W&B image upload failed: {e}")
+
+        plt.close(fig)
+
     def validate(
-        self, val_loader, model, criterion, evaluator, class_func, color_fn, save_scans, epoch=None
+        self, val_loader, model, criterion, evaluator, class_func, color_fn, save_scans,
+        epoch=None, plot_calibration=False,
     ):
         losses = AverageMeter()
         jaccs = AverageMeter()
@@ -1034,11 +1082,15 @@ class Trainer:
                 # Class-wise IoU into the same Aim val payload.
                 val_metrics[f"validation/iou_class_{i}_{class_func(i)}"] = jacc
             
-            # Log all validation metrics to Aim.
+            # Log all validation metrics to W&B.
             current_epoch = epoch if epoch is not None else (self.epoch if hasattr(self, 'epoch') else 0)
             if self.run is not None:
                 _val_step = (current_epoch + 1) * self.parser.get_train_size()
-                for _name, _val in val_metrics.items():
-                    self.run.track(_val, name=_name, step=_val_step, epoch=current_epoch)
+                self.run.log(val_metrics, step=_val_step)
+
+            # Uncertainty-vs-accuracy figure (reliability + rejection curve),
+            # saved locally and uploaded to Aim. Done on the final epoch only.
+            if plot_calibration:
+                self._log_calibration_figure(ece_meter_20, current_epoch, iou.avg)
 
         return acc.avg, iou.avg, losses.avg, rand_imgs
