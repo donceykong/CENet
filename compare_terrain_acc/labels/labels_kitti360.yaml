@@ -1,0 +1,238 @@
+
+name: "kitti_360"
+labels:
+  0: "unlabeled"
+  1: "ego vehicle"
+  2: "rectification border"
+  3: "out of roi"
+  4: "static"
+  5: "dynamic"
+  6: "ground"
+  7: "road"
+  8: "sidewalk"
+  9: "parking"
+  10: "rail track"
+  11: "building"
+  12: "wall"
+  13: "fence"
+  14: "guard rail"
+  15: "bridge"
+  16: "tunnel"
+  17: "pole"
+  18: "polegroup"
+  19: "traffic light"
+  20: "traffic sign"
+  21: "vegetation"
+  22: "terrain"
+  23: "sky"
+  24: "person"
+  25: "rider"
+  26: "car"
+  27: "truck"
+  28: "bus"
+  29: "caravan"
+  30: "trailer"
+  31: "train"
+  32: "motorcycle"
+  33: "bicycle"
+  34: "garage"
+  35: "gate"
+  36: "stop"
+  37: "smallpole"
+  38: "lamp"
+  39: "trash bin"
+  40: "vending machine"
+  41: "box"
+  42: "unknown construction"
+  43: "unknown vehicle"
+  44: "unknown object"
+  65535: "invalid (unlabeled 0xFFFF)"  # KITTI-360 convention; map to unlabeled
+color_map: # bgr
+  0: [0, 0, 0]
+  1: [0, 0, 0]
+  2: [0, 0, 0]
+  3: [0, 0, 0]
+  4: [0, 0, 0]
+  5: [111, 74, 0]
+  6: [81, 0, 81]
+  7: [128, 64, 128]
+  8: [244, 35, 232]
+  9: [250, 170, 160]
+  10: [230, 150, 140]
+  11: [0, 100, 0]
+  12: [102, 102, 156]
+  13: [190, 153, 153]
+  14: [180, 165, 180]
+  15: [150, 100, 100]
+  16: [150, 120, 90]
+  17: [153, 153, 153]
+  18: [153, 153, 153]
+  19: [250, 170, 30]
+  20: [220, 220, 0]
+  21: [107, 142, 35]
+  22: [152, 251, 152]
+  23: [70, 130, 180]
+  24: [220, 20, 60]
+  25: [255, 0, 0]
+  26: [0, 0, 142]
+  27: [0, 0, 70]
+  28: [0, 60, 100]
+  29: [0, 0, 90]
+  30: [0, 0, 110]
+  31: [0, 80, 100]
+  32: [0, 0, 230]
+  33: [119, 11, 32]
+  34: [64, 128, 128]
+  35: [190, 153, 153]
+  36: [150, 120, 90]
+  37: [153, 153, 153]
+  38: [0, 64, 64]
+  39: [0, 128, 192]
+  40: [128, 64, 0]
+  41: [64, 64, 128]
+  42: [102, 0, 0]
+  43: [51, 0, 51]
+  44: [32, 32, 32]
+  65535: [0, 0, 0]  # same as unlabeled
+content: # as a ratio with the total number of points
+  0: 0.06965224
+  1: 0.00000000
+  2: 0.00000000
+  3: 0.00000000
+  4: 0.00000000
+  5: 0.00000000
+  6: 0.02187168
+  7: 0.20180769
+  8: 0.11383797
+  9: 0.03213478   
+  10: 0.00038598
+  11: 0.07512174
+  12: 0.04852084
+  13: 0.01131978
+  14: 0.01131978
+  15: 0.00000041
+  16: 0.00037733
+  17: 0.00079925
+  18: 0.00000000  
+  19: 0.00001363
+  20: 0.00023872
+  21: 0.30087169
+  22: 0.06329805
+  23: 0.00000000
+  24: 0.00035807
+  25: 0.00006905
+  26: 0.00000000
+  27: 0.02391113
+  28: 0.00356262
+  29: 0.00012951
+  30: 0.00054780  
+  31: 0.00025159
+  32: 0.00011442
+  33: 0.00008321
+  34: 0.02191928
+  35: 0.00317428
+  36: 0.00015322
+  37: 0.00012356
+  38: 0.00000775
+  39: 0.00000775    
+  40: 0.00090133
+  41: 0.00108228
+  42: 0.00028965
+  43: 0.00011704
+  44: 0.00062487
+  65535: 0.0  # invalid/unlabeled; mapped to class 0
+# classes that are indistinguishable from single scan or inconsistent in
+# ground truth are mapped to their closest equivalent
+learning_map:
+  0: 0      # "unlabeled" mapped to itself
+  1: 1      # "ego vehicle" mapped to itself
+  2: 2      # "rectification border" mapped to itself
+  3: 3      # "out of roi" mapped to itself
+  4: 4      # "static" mapped to itself
+  5: 5      # "dynamic" mapped to itself
+  6: 6      # "ground" mapped to itself
+  7: 7     # "road" mapped to itself
+  8: 8     # "sidewalk" mapped to itself
+  9: 9     # "parking" mapped to itself
+  10: 10    # "rail track" mapped to itself
+  11: 11    # "building" mapped to itself
+  12: 12    # "wall" mapped to itself
+  13: 13    # "fence" mapped to itself
+  14: 14    # "guard rail" mapped to itself
+  15: 15    # "bridge" mapped to itself
+  16: 16    # "tunnel" mapped to itself
+  17: 17    # "pole" mapped to itself
+  18: 18    # "polegroup" mapped to itself
+  19: 19    # "traffic light" mapped to itself
+  20: 20    # "traffic sign" mapped to itself
+  21: 21    # "vegetation" mapped to itself
+  22: 22    # "terrain" mapped to itself
+  23: 23    # "sky" mapped to itself
+  24: 24    # "person" mapped to itself
+  25: 25    # "rider" mapped to itself
+  26: 26    # "car" mapped to itself
+  27: 27    # "truck" mapped to itself
+  28: 28    # "bus" mapped to itself
+  29: 29    # "caravan" mapped to itself
+  30: 30    # "trailer" mapped to itself
+  31: 31    # "train" mapped to itself
+  32: 32    # "motorcycle" mapped to itself
+  33: 33    # "bicycle" mapped to itself
+  34: 34    # "garage" mapped to itself
+  35: 35    # "gate" mapped to itself
+  36: 36    # "stop" mapped to itself
+  37: 37    # "smallpole" mapped to itself
+  38: 38    # "lamp" mapped to itself
+  39: 39    # "trash bin" mapped to itself
+  40: 40    # "vending machine" mapped to itself
+  41: 41    # "box" mapped to itself
+  42: 42    # "unknown construction" mapped to itself
+  43: 43    # "unknown vehicle" mapped to itself
+  44: 44    # "unknown object" mapped to itself
+  65535: 0   # invalid (0xFFFF) -> unlabeled
+learning_map_inv: # inverse of previous map
+  0: 0      # "unlabeled" mapped to itself
+  1: 1      # "ego vehicle" mapped to itself
+  2: 2      # "rectification border" mapped to itself
+  3: 3      # "out of roi" mapped to itself
+  4: 4      # "static" mapped to itself
+  5: 5      # "dynamic" mapped to itself
+  6: 6      # "ground" mapped to itself
+  7: 7      # "road" mapped to itself
+  8: 8      # "sidewalk" mapped to itself
+  9: 9      # "parking" mapped to itself
+  10: 10    # "rail track" mapped to itself
+  11: 11    # "building" mapped to itself
+  12: 12    # "wall" mapped to itself
+  13: 13    # "fence" mapped to itself
+  14: 14    # "guard rail" mapped to itself
+  15: 15    # "bridge" mapped to itself
+  16: 16    # "tunnel" mapped to itself
+  17: 17    # "pole" mapped to itself
+  18: 18    # "polegroup" mapped to itself
+  19: 19    # "traffic light" mapped to itself
+  20: 20    # "traffic sign" mapped to itself
+  21: 21    # "vegetation" mapped to itself
+  22: 22    # "terrain" mapped to itself
+  23: 23    # "sky" mapped to itself
+  24: 24    # "person" mapped to itself
+  25: 25    # "rider" mapped to itself
+  26: 26    # "car" mapped to itself
+  27: 27    # "truck" mapped to itself
+  28: 28    # "bus" mapped to itself
+  29: 29    # "caravan" mapped to itself
+  30: 30    # "trailer" mapped to itself
+  31: 31    # "train" mapped to itself
+  32: 32    # "motorcycle" mapped to itself
+  33: 33    # "bicycle" mapped to itself
+  34: 34    # "garage" mapped to itself
+  35: 35    # "gate" mapped to itself
+  36: 36    # "stop" mapped to itself
+  37: 37    # "smallpole" mapped to itself
+  38: 38    # "lamp" mapped to itself
+  39: 39    # "trash bin" mapped to itself
+  40: 40    # "vending machine" mapped to itself
+  41: 41    # "box" mapped to itself
+  42: 42    # "unknown construction" mapped to itself
+  43: 43    # "unknown vehicle" mapped to itself
+  44: 44    # "unknown object" mapped to itself

@@ -1,0 +1,147 @@
+# Common taxonomy: 9 classes shared across all datasets.
+# All raw dataset labels (SemanticKITTI, MCD, etc.) are mapped to these
+# contiguous indices at ingestion time so that num_class = 9.
+
+name: "common"
+num_class: 9
+
+labels:
+  0: "unlabeled"
+  1: "road"
+  2: "sidewalk"
+  3: "parking"
+  4: "building"
+  5: "fence"
+  6: "vegetation"
+  7: "vehicle"
+  8: "terrain"
+
+# RGB colors for visualization (one per common class)
+color_map:
+  0:  [0, 0, 0]          # unlabeled
+  1:  [128, 64, 128]     # road
+  2:  [232, 35, 244]     # sidewalk
+  3:  [160, 170, 250]    # parking
+  4:  [255, 200, 0]      # building
+  5:  [255, 120, 50]     # fence
+  6:  [0, 175, 0]        # vegetation
+  7:  [100, 150, 245]    # vehicle
+  8:  [144, 238, 144]    # terrain
+
+# ---- Per-dataset mappings: raw label ID → common class index ---------------
+
+semkitti_to_common:
+  0: 0       # unlabeled
+  1: 0       # outlier → unlabeled
+  10: 7      # car → vehicle
+  11: 0      # bicycle → unlabeled
+  13: 7      # bus → vehicle
+  15: 0      # motorcycle → unlabeled
+  16: 7      # on-rails → vehicle
+  18: 7      # truck → vehicle
+  20: 7      # other-vehicle → vehicle
+  30: 0      # person → unlabeled
+  31: 0      # bicyclist → unlabeled
+  32: 0      # motorcyclist → unlabeled
+  40: 1      # road
+  44: 3      # parking
+  48: 2      # sidewalk
+  49: 0      # other-ground → unlabeled
+  50: 4      # building
+  51: 5      # fence
+  52: 0      # other-structure → unlabeled
+  60: 1      # lane-marking → road
+  70: 6      # vegetation
+  71: 6      # trunk → vegetation
+  72: 8      # terrain
+  80: 0      # pole → unlabeled
+  81: 0      # traffic-sign → unlabeled
+  99: 0      # other-object → unlabeled
+  252: 7     # moving-car → vehicle
+  253: 0     # moving-bicyclist → unlabeled
+  254: 0     # moving-person → unlabeled
+  255: 0     # moving-motorcyclist → unlabeled
+  256: 7     # moving-on-rails → vehicle
+  257: 7     # moving-bus → vehicle
+  258: 7     # moving-truck → vehicle
+  259: 7     # moving-other-vehicle → vehicle
+
+mcd_to_common:
+  0: 5       # barrier → fence
+  1: 0       # bike → unlabeled
+  2: 4       # building
+  3: 0       # chair → unlabeled
+  4: 0       # cliff → unlabeled
+  5: 0       # container → unlabeled
+  6: 0       # curb → unlabeled
+  7: 5       # fence
+  8: 0       # hydrant → unlabeled
+  9: 0       # infosign → unlabeled
+  10: 1      # lanemarking → road
+  11: 0      # noise → unlabeled
+  12: 0      # other → unlabeled
+  13: 3      # parkinglot → parking
+  14: 0      # pedestrian → unlabeled
+  15: 0      # pole → unlabeled
+  16: 1      # road
+  17: 4      # shelter → building
+  18: 2      # sidewalk
+  19: 0      # stairs → unlabeled
+  20: 0      # structure-other → unlabeled
+  21: 0      # traffic-cone → unlabeled
+  22: 0      # traffic-sign → unlabeled
+  23: 0      # trashbin → unlabeled
+  24: 6      # treetrunk → vegetation
+  25: 6      # vegetation
+  26: 7      # vehicle-dynamic → vehicle
+  27: 7      # vehicle-other → vehicle
+  28: 7      # vehicle-static → vehicle
+  29: 8      # terrain
+
+kitti360_to_common:
+  0: 0       # unlabeled
+  1: 0       # ego vehicle → unlabeled
+  2: 0       # rectification border → unlabeled
+  3: 0       # out of roi → unlabeled
+  4: 0       # static → unlabeled
+  5: 0       # dynamic → unlabeled
+  6: 0       # ground → unlabeled
+  7: 1       # road
+  8: 2       # sidewalk
+  9: 3       # parking
+  10: 1      # rail track → road
+  11: 4      # building
+  12: 4      # wall → building
+  13: 5      # fence
+  14: 5      # guard rail → fence
+  15: 4      # bridge → building
+  16: 4      # tunnel → building
+  17: 0      # pole → unlabeled
+  18: 0      # polegroup → unlabeled
+  19: 0      # traffic light → unlabeled
+  20: 0      # traffic sign → unlabeled
+  21: 6      # vegetation
+  22: 8      # terrain
+  23: 0      # sky → unlabeled
+  24: 0      # person → unlabeled
+  25: 0      # rider → unlabeled
+  26: 7      # car → vehicle
+  27: 7      # truck → vehicle
+  28: 7      # bus → vehicle
+  29: 7      # caravan → vehicle
+  30: 7      # trailer → vehicle
+  31: 7      # train → vehicle
+  32: 0      # motorcycle → unlabeled
+  33: 0      # bicycle → unlabeled
+  34: 4      # garage → building
+  35: 5      # gate → fence
+  36: 0      # stop → unlabeled
+  37: 0      # smallpole → unlabeled
+  38: 0      # lamp → unlabeled
+  39: 0      # trash bin → unlabeled
+  40: 0      # vending machine → unlabeled
+  41: 0      # box → unlabeled
+  42: 4      # unknown construction → building
+  43: 7      # unknown vehicle → vehicle
+  44: 0      # unknown object → unlabeled
+  65535: 0   # invalid (0xFFFF) → unlabeled
