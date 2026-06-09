@@ -23,7 +23,7 @@ from ce_net.utils.sensor import load_sensor, materialize_sensor_groups
 
 
 def load_yaml(config_path):
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -139,14 +139,14 @@ def _persist_run_artifacts(FLAGS, ARCH, DATA, model_config):
     os.makedirs(FLAGS.log)
 
     # Save merged ARCH so inference can reload it as-is.
-    with open(os.path.join(FLAGS.log, "arch_cfg.yaml"), "w") as f:
-        yaml.safe_dump(ARCH, f, sort_keys=False)
+    with open(os.path.join(FLAGS.log, "arch_cfg.yaml"), "w", encoding="utf-8") as f:
+        yaml.safe_dump(ARCH, f, sort_keys=False, allow_unicode=True)
     copyfile(FLAGS.data_cfg, os.path.join(FLAGS.log, "data_cfg.yaml"))
 
     # Snapshot the resolved model entry (img_width/img_height + paths) so
     # inference picks up the same projection shape that was trained on.
-    with open(os.path.join(FLAGS.log, "model_config.yaml"), "w") as f:
-        yaml.safe_dump(model_config, f, sort_keys=False)
+    with open(os.path.join(FLAGS.log, "model_config.yaml"), "w", encoding="utf-8") as f:
+        yaml.safe_dump(model_config, f, sort_keys=False, allow_unicode=True)
 
 
 def load_config_and_train(FLAGS, base_config, dataset_name, model_config):

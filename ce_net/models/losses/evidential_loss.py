@@ -25,6 +25,10 @@ class EvidentialLossCal:
         # KL anneal window in epochs. Paper uses min(1.0, epoch/10); null/0
         # falls back to annealing over the full max_epoch (EvSemMap-style).
         self.kl_warmup_epochs = unc_args.get("kl_warmup_epochs")
+        # When False, the KL coefficient is held STATIC at kl_strength from
+        # epoch 0 (no ramp). Useful for isolating noise sources, since the
+        # ramp otherwise makes the training objective non-stationary.
+        self.kl_anneal = unc_args.get("kl_anneal", True)
         self.ohem = unc_args.get("ohem")
         if self.unc_act == "exp":
             self.activation = lambda x: torch.exp(torch.clamp(x, -10, 10))
@@ -57,10 +61,19 @@ class EvidentialLossCal:
         self.max_epoch = max(1, int(max_epoch))
         self.writer = writer
         
-        # Stashed for external logging (Aim in trainer_wb).
+        # Stashed for external logging (W&B in trainer_wb).
         self.last_edl_loss = 0.0
         self.last_kl_loss = 0.0
         self.last_kl_coef = 0.0
+        self.last_kl_weighted = 0.0
+        # Dirichlet health diagnostics (populated in loss()).
+        self.last_u_correct = 0.0
+        self.last_u_incorrect = 0.0
+        self.last_u_gap = 0.0
+        self.last_evidence_mean = 0.0
+        self.last_alpha_true = 0.0
+        self.last_alpha_wrong = 0.0
+        self.last_dead_frac = 0.0
         if self.ohem is not None:
             assert 0 <= self.ohem < 1
 
@@ -166,11 +179,15 @@ class EvidentialLossCal:
         # (kl_alpha keeps alpha=1 on the true class so it isn't penalised).
         target_c = 1.0
         kl_alpha = (alpha - target_c) * (1 - labels_1hot) + target_c
-        # Linear KL anneal over `kl_warmup_epochs` (paper uses 10); when unset,
-        # anneal over the full run (EvSemMap-style). Clamped at kl_strength so
-        # it doesn't overshoot past the warmup window.
-        W = max(1, int(self.kl_warmup_epochs)) if self.kl_warmup_epochs else self.max_epoch
-        kl_coef = self.kl_strength * min(1.0, max(0.0, float(curr_epoch)) / W)
+        if not self.kl_anneal:
+            # Static: full KL weight from epoch 0 (stationary objective).
+            kl_coef = self.kl_strength
+        else:
+            # Linear KL anneal over `kl_warmup_epochs` (paper uses 10); when
+            # unset, anneal over the full run (EvSemMap-style). Clamped at
+            # kl_strength so it doesn't overshoot past the warmup window.
+            W = max(1, int(self.kl_warmup_epochs)) if self.kl_warmup_epochs else self.max_epoch
+            kl_coef = self.kl_strength * min(1.0, max(0.0, float(curr_epoch)) / W)
         loss_kl = self._compute_kl_loss(kl_alpha, valid_mask=valid_mask)
 
         if self.writer is not None:
@@ -179,6 +196,40 @@ class EvidentialLossCal:
         self.last_edl_loss = edl_mean.item()
         self.last_kl_loss = loss_kl.item()
         self.last_kl_coef = float(kl_coef)
+        # Weighted KL as it actually enters the total loss — lets us see the
+        # edl_loss : kl balance directly (kl_loss alone hides the coef ramp).
+        self.last_kl_weighted = float(kl_coef) * loss_kl.item()
+
+        # --- Dirichlet health diagnostics (no grad; logged by the trainer) ---
+        # These don't affect the loss; they answer "is the evidence behaving?".
+        with torch.no_grad():
+            K = alpha.shape[1]
+            S = alpha0.squeeze(1)                       # [B,H,W]
+            vm = valid_mask.squeeze(1)                  # [B,H,W] bool
+            vcount = vm.sum().clamp(min=1).item()
+            u = K / S.clamp(min=1e-8)                   # total uncertainty K/S
+            pred = alpha.argmax(dim=1)                  # [B,H,W]
+            lab = labels.squeeze(1)
+            correct = (pred == lab) & vm
+            incorrect = (pred != lab) & vm
+            nc = correct.sum().clamp(min=1).item()
+            ni = incorrect.sum().clamp(min=1).item()
+            # THE core test: uncertainty should be higher on wrong predictions.
+            self.last_u_correct = (u * correct).sum().item() / nc
+            self.last_u_incorrect = (u * incorrect).sum().item() / ni
+            self.last_u_gap = self.last_u_incorrect - self.last_u_correct
+            # Evidence health: total evidence Σe_k = S - K. Collapse -> ~0
+            # (flat Dirichlet, under-confident); explosion -> overconfident.
+            total_evidence = S - K
+            self.last_evidence_mean = (total_evidence * vm).sum().item() / vcount
+            # True-class alpha should grow; wrong-class alpha should stay ~1
+            # (the KL pins it there). Big gap = well-separated Dirichlet.
+            alpha_true = (alpha * labels_1hot).sum(dim=1)          # [B,H,W]
+            self.last_alpha_true = (alpha_true * vm).sum().item() / vcount
+            alpha_wrong = (S - alpha_true) / max(1, K - 1)
+            self.last_alpha_wrong = (alpha_wrong * vm).sum().item() / vcount
+            # Fraction of valid pixels with no evidence at all (matters for relu).
+            self.last_dead_frac = ((total_evidence < 1e-6) & vm).sum().item() / vcount
 
         return edl_mean + kl_coef * loss_kl
 

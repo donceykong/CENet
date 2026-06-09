@@ -193,8 +193,10 @@ class Trainer:
                     "num_classes": self.parser.get_n_classes(),
                     "log_dir": self.log,
                     "evidential_loss": self.ARCH["train"].get("evidential_loss", False),
+                    "unc_act": self.ARCH["train"].get("evidential", {}).get("unc_act"),
                     "unc_type": self.ARCH["train"].get("evidential", {}).get("unc_type"),
                     "kl_strength": self.ARCH["train"].get("evidential", {}).get("kl_strength"),
+                    "kl_anneal": self.ARCH["train"].get("evidential", {}).get("kl_anneal", True),
                     "kl_warmup_epochs": self.ARCH["train"].get("evidential", {}).get("kl_warmup_epochs"),
                     "keyframe_dist": self.ARCH["train"].get("keyframe_subset", {}).get("keyframe_dist"),
                     "perc_scans_to_use": self.ARCH["train"].get("keyframe_subset", {}).get("perc_scans_to_use"),
@@ -265,6 +267,10 @@ class Trainer:
         #         self.scheduler = MyLR(optimizer=self.optimizer, cycle=30)
         #         print(self.optimizer)
 
+        # Per-iteration stepping by default; the "step" (EvSemMap) schedule
+        # overrides this to advance once per epoch.
+        self.step_scheduler_per_epoch = False
+
         if self.ARCH["train"]["scheduler"] == "consine":
             length = self.parser.get_train_size()
             # dict = self.ARCH["train"]["consine"]
@@ -301,6 +307,25 @@ class Trainer:
                 T_up=dict["wup_epochs"] * length,
                 gamma=dict["gamma"],
             )
+        elif self.ARCH["train"]["scheduler"] == "step":
+            # EvSemMap-faithful schedule (EvSemMap/EvSemSeg/train.py): plain
+            # Adam, betas=(0.5,0.999), no weight decay, and StepLR stepped once
+            # per epoch. EvSemMap defaults lr=2e-4, step_size=5, gamma=0.8 ->
+            # ~87x LR decay over 100 epochs, which lets EDL training settle
+            # (vs the constant-LR cosine path that leaves edl_loss oscillating).
+            print("--using adam + StepLR (EvSemMap-faithful, per-epoch)--")
+            step_cfg = self.ARCH["train"].get("step", {})
+            self.optimizer = optim.Adam(
+                self.model.parameters(),
+                lr=step_cfg.get("lr", 2e-4),
+                betas=(0.5, 0.999),
+            )
+            self.scheduler = optim.lr_scheduler.StepLR(
+                self.optimizer,
+                step_size=step_cfg.get("step_size", 5),
+                gamma=step_cfg.get("gamma", 0.8),
+            )
+            self.step_scheduler_per_epoch = True
         else:
             # self.optimizer = optim.SGD(
             #     self.model.parameters(),
@@ -480,6 +505,11 @@ class Trainer:
                 show_scans=self.ARCH["train"]["show_scans"],
             )
 
+            # Per-epoch LR schedules (EvSemMap "step") advance here; per-
+            # iteration schedules already stepped inside train_epoch.
+            if self.step_scheduler_per_epoch:
+                self.scheduler.step()
+
             print("GOING FORWARD ...")
 
             # update info
@@ -626,7 +656,7 @@ class Trainer:
         if self.gpu:
             torch.cuda.empty_cache()
 
-        scaler = torch.cuda.amp.GradScaler()
+        scaler = torch.amp.GradScaler('cuda')
 
         # switch to train mode
         model.train()
@@ -837,14 +867,26 @@ class Trainer:
                     "train/batch": i,
                 }
                 if self.use_evidential:
-                    train_metrics["train/edl_loss"] = self.evidential_loss_cal.last_edl_loss
-                    train_metrics["train/kl_loss"] = self.evidential_loss_cal.last_kl_loss
-                    train_metrics["train/kl_coef"] = self.evidential_loss_cal.last_kl_coef
+                    ev = self.evidential_loss_cal
+                    train_metrics["train/edl_loss"] = ev.last_edl_loss
+                    train_metrics["train/kl_loss"] = ev.last_kl_loss
+                    train_metrics["train/kl_coef"] = ev.last_kl_coef
+                    train_metrics["train/kl_weighted"] = ev.last_kl_weighted
+                    # Dirichlet health (see evidential_loss.py diagnostics block).
+                    train_metrics["edl/u_correct"] = ev.last_u_correct
+                    train_metrics["edl/u_incorrect"] = ev.last_u_incorrect
+                    train_metrics["edl/u_gap"] = ev.last_u_gap
+                    train_metrics["edl/evidence_mean"] = ev.last_evidence_mean
+                    train_metrics["edl/alpha_true"] = ev.last_alpha_true
+                    train_metrics["edl/alpha_wrong"] = ev.last_alpha_wrong
+                    train_metrics["edl/dead_frac"] = ev.last_dead_frac
                 if self.run is not None:
                     _iter_step = epoch * len(train_loader) + i
                     self.run.log(train_metrics, step=_iter_step)
-            # step scheduler
-            scheduler.step()
+            # step scheduler (per-iteration schedulers only; the per-epoch
+            # "step" schedule is advanced once per epoch in train()).
+            if not self.step_scheduler_per_epoch:
+                scheduler.step()
         return acc.avg, iou.avg, losses.avg
 
     def _log_calibration_figure(self, ece_meter, epoch, val_iou):
@@ -886,6 +928,76 @@ class Trainer:
                 print(f"[calibration] W&B image upload failed: {e}")
 
         plt.close(fig)
+
+    def _save_bar_figure(self, names, values, mean_val, title, ylabel,
+                         subdir, wandb_key, epoch, color="tab:blue"):
+        """Render a per-class bar chart, save it under <log>/<subdir>/ and
+        upload it to W&B under <wandb_key>. Best-effort: any failure is logged
+        and swallowed so it never aborts training."""
+        try:
+            fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.4), 5))
+            ax.bar(range(len(names)), values, color=color)
+            ax.axhline(mean_val, color="tab:red", linestyle="--",
+                       label=f"mean {mean_val:.3f}")
+            ax.set_xticks(range(len(names)))
+            ax.set_xticklabels(names, rotation=90, fontsize=7)
+            ax.set_ylim(0.0, 1.0)
+            ax.set_ylabel(ylabel)
+            ax.set_title(f"{os.path.basename(self.log)} | epoch {epoch} | {title}")
+            ax.legend(loc="upper right")
+            fig.tight_layout()
+        except Exception as e:
+            print(f"[{subdir}] figure build failed: {e}")
+            return
+
+        out_dir = os.path.join(self.log, subdir)
+        os.makedirs(out_dir, exist_ok=True)
+        png_path = os.path.join(out_dir, f"epoch_{epoch}.png")
+        try:
+            fig.savefig(png_path, dpi=120)
+            print(f"[{subdir}] saved {png_path}")
+        except Exception as e:
+            print(f"[{subdir}] local save failed: {e}")
+
+        if self.run is not None:
+            try:
+                # Same step axis as the val/epoch metrics (see calibration fig).
+                _img_step = (epoch + 1) * self.parser.get_train_size()
+                self.run.log({wandb_key: wandb.Image(fig)}, step=_img_step)
+            except Exception as e:
+                print(f"[{subdir}] W&B image upload failed: {e}")
+
+        plt.close(fig)
+
+    def _log_per_class_figures(self, evaluator, class_func, epoch):
+        """Build per-class accuracy (recall) AND per-class IoU bar charts from
+        the evaluator's confusion matrix. Accuracy is tp / (tp + fn) — the
+        fraction of each class's ground-truth pixels classified correctly; IoU
+        is tp / (tp + fp + fn). Both restricted to the evaluator's included
+        (non-ignored) classes."""
+        try:
+            tp, fp, fn = evaluator.getStats()
+            per_class_acc = (tp / (tp + fn + 1e-15)).cpu().numpy()
+            per_class_iou = (tp / (tp + fp + fn + 1e-15)).cpu().numpy()
+            classes = evaluator.include.cpu().numpy().tolist()
+        except Exception as e:
+            print(f"[per_class] stats build failed: {e}")
+            return
+
+        names = [class_func(c) for c in classes]
+        accs = [per_class_acc[c] for c in classes]
+        ious = [per_class_iou[c] for c in classes]
+        mean_acc = float(sum(accs) / len(accs)) if accs else 0.0
+        mean_iou = float(sum(ious) / len(ious)) if ious else 0.0
+
+        self._save_bar_figure(
+            names, accs, mean_acc, "per-class accuracy", "accuracy (recall)",
+            "per_class_acc", "per_class_acc/accuracy", epoch, color="tab:blue",
+        )
+        self._save_bar_figure(
+            names, ious, mean_iou, "per-class IoU", "IoU",
+            "per_class_iou", "per_class_iou/iou", epoch, color="tab:green",
+        )
 
     def validate(
         self, val_loader, model, criterion, evaluator, class_func, color_fn, save_scans,
@@ -1092,5 +1204,10 @@ class Trainer:
             # saved locally and uploaded to Aim. Done on the final epoch only.
             if plot_calibration:
                 self._log_calibration_figure(ece_meter_20, current_epoch, iou.avg)
+                # Per-class accuracy + IoU bar charts over the (test/val) set,
+                # same final-epoch cadence as the calibration figure.
+                self._log_per_class_figures(
+                    evaluator, class_func, current_epoch
+                )
 
         return acc.avg, iou.avg, losses.avg, rand_imgs

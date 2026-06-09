@@ -8,14 +8,19 @@ train:
   evidential_loss: True   #  True to use evidential loss (EvSemMap-style)
   evidential:        #  when evidential_loss: True
     unc_act: "exp"    #  "exp" | "relu" | "softplus"
-    unc_type: "log"  #  "log" | "digamma" | "mse" (paper Eq.5, recommended)
-    kl_strength: 0.1      # EvSemMap argparser default; their published 0.5 + our higher LR was overshooting
-    kl_warmup_epochs: 10  # paper's min(1.0, epoch/10); null => anneal over max_epochs (EvSemMap-style)
-    ohem: null       #  null or float in (0,1) for OHEM
+    unc_type: "digamma"  #  "log" | "digamma" | "mse" (paper Eq.5, recommended)
+    kl_strength: 0.01      # EvSemMap argparser default; their published 0.5 + our higher LR was overshooting
+    kl_anneal: true  # false => static KL coef (= kl_strength) from epoch 0; isolates noise (ignores kl_warmup_epochs)
+    kl_warmup_epochs: 10  # only used when kl_anneal: true. paper's min(1.0, epoch/10); null => over max_epochs
+    ohem: 0.0       #  null or float in (0,1) for OHEM
   aux_loss: True
   lamda: 1.0
-  scheduler: "consine"  # "consine" or "decay"
+  scheduler: "step"     # "step" (EvSemMap: Adam+StepLR, per-epoch) | "consine" | "decay"
   max_epochs: 100       # matches EvSemMap from-scratch run; 1024p/2048p stages stay at 30 (fine-tunes)
+  step:                 # EvSemMap-faithful: Adam(betas 0.5,0.999) + StepLR
+    lr: 0.0002          # EvSemMap l_rate = 2e-4
+    step_size: 5        # decay every N epochs
+    gamma: 0.8          # lr *= gamma each step (~87x over 100 epochs)
   consine:
     min_lr: 0.0001
     max_lr: 0.0002        # matches EvSemMap l_rate=2e-4 (constant LR due to scheduler bug — see trainer_wb.py:284)

@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
-"""EDL ablation launcher: loss-form x KL-warmup x KL-strength.
+"""EDL ablation launcher: evidence-act x loss-form x KL-warmup x KL-strength.
 
-Sweeps the single-stage 512p EDL model over the cross-product of three axes,
+Sweeps the single-stage 512p EDL model over the cross-product of four axes,
 holding everything else (split, seed, LR schedule, batch size) fixed:
 
-    unc_type         in {log, mse}      # mse = paper Eq.5, reported as most stable
+    unc_act          in {exp, relu, softplus}  # evidence activation; default exp only
+    unc_type         in {log, digamma, mse}    # mse = paper Eq.5, reported as most stable
     kl_warmup_epochs in {10, null}      # 10 = paper's min(1,epoch/10); null = anneal over max_epochs
     kl_strength      in {0.05,0.1,0.5}  # KL weight; MSE's loss is ~3x smaller so the
                                         #   same kl_strength bites ~3x harder than for log
 
 Each cell trains FROM SCRATCH into its own run dir so runs never clobber, and
-logs to Aim with unc_type / kl_warmup_epochs / kl_strength hparams for
+logs to Aim with unc_act / unc_type / kl_warmup_epochs / kl_strength hparams for
 side-by-side compare. The calibration figure (reliability + rejection curve) is
 produced on the final epoch of each run and uploaded to Aim.
 
-Cell names encode all three axes, e.g. `mse_W10_kl0p1` (dots -> 'p').
+Cell names encode all four axes, e.g. `exp_mse_W10_kl0p1` (dots -> 'p').
 
 Usage:
-    python scripts/train_ablation.py                       # full grid, full epochs
-    python scripts/train_ablation.py --epochs 1            # 1-epoch smoke test
-    python scripts/train_ablation.py --kl-strengths 0.1    # pin one KL value
-    python scripts/train_ablation.py --unc-types mse       # only the MSE half
-    python scripts/train_ablation.py --cells mse_W10_kl0p1 # explicit cell subset
-    python scripts/train_ablation.py --dry-run             # resolve + print, no training
+    python scripts/train_ablation.py                          # default grid, full epochs
+    python scripts/train_ablation.py --epochs 1               # 1-epoch smoke test
+    python scripts/train_ablation.py --kl-strengths 0.1       # pin one KL value
+    python scripts/train_ablation.py --unc-types mse          # only the MSE half
+    python scripts/train_ablation.py --unc-acts exp relu softplus  # sweep activation
+    python scripts/train_ablation.py --cells exp_mse_W10_kl0p1     # explicit cell subset
+    python scripts/train_ablation.py --dry-run               # resolve + print, no training
 """
 
 import argparse
@@ -49,9 +51,14 @@ from train import (  # sibling scripts/train.py
 )
 
 # Ablation axes.
-UNC_TYPES = ["log", "mse"]
+UNC_ACTS = ["exp", "relu", "softplus"]  # evidence activation (loss reads unc_act)
+UNC_TYPES = ["log", "digamma", "mse"]   # loss form (mse = paper Eq.5)
 WARMUPS = {"W10": 10, "Wmax": None}  # cell-name key -> kl_warmup_epochs value
 DEFAULT_KL_STRENGTHS = [0.05, 0.1, 0.5]
+# Default to exp-only so adding the unc_act axis doesn't silently 3x the grid;
+# pass --unc-acts exp relu softplus to sweep it.
+DEFAULT_UNC_ACTS = ["exp"]
+DEFAULT_UNC_TYPES = ["log", "mse"]
 
 # Per-dataset keyframe selectors (only MCD is implemented; others raise).
 _KEYFRAME_FNS = {
@@ -104,18 +111,20 @@ def _kl_key(kl):
     return ("kl%g" % kl).replace(".", "p")
 
 
-def build_cells(unc_types, warmup_keys, kl_strengths):
-    """Cross-product of the three axes -> {cell_name: overrides}."""
+def build_cells(unc_acts, unc_types, warmup_keys, kl_strengths):
+    """Cross-product of the four axes -> {cell_name: overrides}."""
     cells = {}
-    for unc in unc_types:
-        for wkey in warmup_keys:
-            for kl in kl_strengths:
-                name = f"{unc}_{wkey}_{_kl_key(kl)}"
-                cells[name] = {
-                    "unc_type": unc,
-                    "kl_warmup_epochs": WARMUPS[wkey],
-                    "kl_strength": kl,
-                }
+    for act in unc_acts:
+        for unc in unc_types:
+            for wkey in warmup_keys:
+                for kl in kl_strengths:
+                    name = f"{act}_{unc}_{wkey}_{_kl_key(kl)}"
+                    cells[name] = {
+                        "unc_act": act,
+                        "unc_type": unc,
+                        "kl_warmup_epochs": WARMUPS[wkey],
+                        "kl_strength": kl,
+                    }
     return cells
 
 
@@ -147,8 +156,11 @@ def main():
     ap = argparse.ArgumentParser("./train_ablation.py")
     ap.add_argument("--epochs", type=int, default=None,
                     help="Override max_epochs for every cell (e.g. 1 for a smoke test).")
-    ap.add_argument("--unc-types", nargs="*", choices=UNC_TYPES, default=UNC_TYPES,
-                    help="loss-form axis. Default: log mse.")
+    ap.add_argument("--unc-acts", nargs="*", choices=UNC_ACTS, default=DEFAULT_UNC_ACTS,
+                    help="evidence-activation axis. Default: exp. "
+                         "Pass 'exp relu softplus' to sweep it.")
+    ap.add_argument("--unc-types", nargs="*", choices=UNC_TYPES, default=DEFAULT_UNC_TYPES,
+                    help="loss-form axis. Default: log mse (digamma also available).")
     ap.add_argument("--warmups", nargs="*", choices=list(WARMUPS), default=list(WARMUPS),
                     help="KL-warmup axis (cell-name keys). Default: W10 Wmax.")
     ap.add_argument("--kl-strengths", nargs="*", type=float, default=DEFAULT_KL_STRENGTHS,
@@ -172,7 +184,7 @@ def main():
         raise SystemExit("--perc-scans-to-use must be in (0, 1].")
 
     # Build the grid from the axes, then optionally filter to an explicit list.
-    all_cells = build_cells(args.unc_types, args.warmups, args.kl_strengths)
+    all_cells = build_cells(args.unc_acts, args.unc_types, args.warmups, args.kl_strengths)
     if args.cells:
         unknown = [c for c in args.cells if c not in all_cells]
         if unknown:
@@ -224,6 +236,7 @@ def main():
         # Apply the cell's evidential overrides onto the resolved ARCH.
         ARCH["train"]["evidential_loss"] = True
         ev = ARCH["train"].setdefault("evidential", {})
+        ev["unc_act"] = overrides["unc_act"]
         ev["unc_type"] = overrides["unc_type"]
         ev["kl_warmup_epochs"] = overrides["kl_warmup_epochs"]
         ev["kl_strength"] = overrides["kl_strength"]
@@ -231,7 +244,7 @@ def main():
             ARCH["train"]["max_epochs"] = args.epochs
 
         print(
-            f"  unc_type={ev['unc_type']}  kl_warmup_epochs={ev['kl_warmup_epochs']}  "
+            f"  unc_act={ev['unc_act']}  unc_type={ev['unc_type']}  kl_warmup_epochs={ev['kl_warmup_epochs']}  "
             f"kl_strength={ev.get('kl_strength')}  max_epochs={ARCH['train']['max_epochs']}  "
             f"batch_size={ARCH['train']['batch_size']}"
         )
