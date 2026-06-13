@@ -1,19 +1,20 @@
-# Cross-domain inference: the MCD-trained EDL model run on KITTI-360 seq 0000.
-# Output predictions are in MCD's 30-class space (not KITTI-360's taxonomy);
-# input scans projected with config/SENSORS/HDL_64.yaml (Velodyne HDL-64E).
+# In-domain inference: the MCD-trained EDL model run on held-out KTH seq
+# kth_day_09. Scans are Ouster OS1-64 (config/SENSORS/OS1_64.yaml, fov +/-22.5),
+# the same sensor geometry the model trained on. dataset_path points at the
+# `kth` level so bare `kth_day_09` resolves to <root>/kth_day_09/lidar_bin/data.
 #
-# To switch back to KTH inference: set dataset_name=MCD,
-#   dataset_path=/media/donceykong/doncey_ssd_021/datasets/mcd,
-#   data_config=.../data_cfg_mcd_kth.yaml.
-# To switch back to NTU+TUHH in-domain inference: dataset_name=MCD,
+# To switch to KITTI-360 cross-domain inference: set dataset_name=KITTI-360,
+#   dataset_path=/media/donceykong/donceys_data_ssd/datasets/kitti360,
+#   data_config=.../data_cfg_mcd.yaml (sensor_config: HDL_64 takes over).
+# To switch to NTU+TUHH in-domain inference: dataset_name=MCD,
 #   dataset_path=/media/donceykong/donceys_data_ssd/datasets/mcd,
 #   data_config=.../data_cfg_mcd.yaml (sensor_groups path takes over).
-dataset_path: /media/donceykong/doncey_ssd_021/datasets/kitti360
-dataset_name: KITTI-360
+dataset_path: /media/donceykong/donceys_data_ssd/datasets/mcd/kth
+dataset_name: MCD
 infer_or_train: infer
-data_config: /home/donceykong/Desktop/ARPG/projects/OSM-BKI-FULL/CENet_OG/ce_net/config/data_cfg_mcd.yaml
-relative_infer_dir: "inferred_labels/cenet_mcd_terrain_ntu_tuhh_pure_EDL"
+data_config: /home/donceykong/Desktop/ARPG/projects/OSM-BKI-FULL/CENet_OG/ce_net/config/data_cfg_mcd_kth.yaml
+relative_infer_dir: "inferred_labels/cenet_mcd_relu_mse_W10_kl0p01"
 
 inference:
-  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_terrain_ntu_tuhh_pure_EDL/cenet_mcd-512-EDL
+  model_path: /media/donceykong/donceys_data_ssd/models/CENet/mcd_terrain_ntu_tuhh_pure_EDL__ablation/relu_mse_W10_kl0p01
   split: test

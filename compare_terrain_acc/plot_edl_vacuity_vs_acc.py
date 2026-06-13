@@ -1,13 +1,18 @@
 """
-Plot per-class accuracy vs EDL vacuity for cenet_mcd_terrain_ntu_tuhh_EDL.
+Plot per-class accuracy vs EDL vacuity for cenet_mcd_relu_mse_W10_kl0p01.
 
 Layout (one figure, two stacked panels sharing x-axis):
 
   Top:    accuracy per vacuity bin -- one line per "major" class
           (i.e. classes with GT presence >= --min-frac of all kept points),
-          plus a thick black "overall" line.
+          plus a thick black "overall" line. Each line is the *pooled*
+          accuracy; behind it a translucent "error band" (a.k.a. confidence
+          band / fan chart) shows the per-frame spread of accuracy in that
+          bin (--band: pct/std/sem).
 
   Bottom: histogram of point counts per vacuity bin (log y).
+
+Pass --per-class to also save one figure per major class next to --out.
 
 Vacuity comes from <EDL>/confidence_scores/<name>.bin as float16 — despite
 the directory name, the value stored is K/S (K=30, S=sum of Dirichlet
@@ -20,6 +25,7 @@ under terrain is relabeled 25 -> 29). Predictions come from <EDL>/*.bin
 Run:
   python3 plot_edl_vacuity_vs_acc.py
   python3 plot_edl_vacuity_vs_acc.py --bins 30 --min-frac 0.005 --limit 500
+  python3 plot_edl_vacuity_vs_acc.py --per-class --band pct --band-pct 25
 """
 
 import argparse
@@ -47,9 +53,9 @@ MCD_LABELS = {
 NUM_CLASSES = 30
 TERRAIN_CLS = 29
 
-SEQ_DIR  = "/media/donceykong/doncey_ssd_021/datasets/mcd/kth_day_09"
+SEQ_DIR  = "/media/donceykong/donceys_data_ssd/datasets/mcd/kth/kth_day_09"
 GT_DIR   = os.path.join(SEQ_DIR, "gt_labels_terrain")
-EDL_DIR  = os.path.join(SEQ_DIR, "inferred_labels/cenet_mcd_terrain_ntu_tuhh_EDL")
+EDL_DIR  = os.path.join(SEQ_DIR, "inferred_labels/cenet_mcd_relu_mse_W10_kl0p01")
 CONF_DIR = os.path.join(EDL_DIR, "confidence_scores")  # actually vacuity
 
 
@@ -61,15 +67,21 @@ def accumulate(
     nbins: int,
     vmax: float,
     ignore: set[int],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Streams files; returns:
       correct_hist[NUM_CLASSES, nbins]  # correct points by (gt_class, bin)
       total_hist  [NUM_CLASSES, nbins]  # total points   by (gt_class, bin)
       bin_edges   [nbins+1]
+      pf_correct  [F, NUM_CLASSES, nbins]  # per-frame correct counts
+      pf_totals   [F, NUM_CLASSES, nbins]  # per-frame total counts
+    The per-frame (pf_*) arrays let the plot show a per-frame spread band.
     """
     edges = np.linspace(0.0, vmax, nbins + 1, dtype=np.float64)
     correct = np.zeros((NUM_CLASSES, nbins), dtype=np.int64)
     totals  = np.zeros((NUM_CLASSES, nbins), dtype=np.int64)
+    nframes = len(files)
+    pf_correct = np.zeros((nframes, NUM_CLASSES, nbins), dtype=np.int32)
+    pf_totals  = np.zeros((nframes, NUM_CLASSES, nbins), dtype=np.int32)
 
     t0 = time.time()
     for i, fname in enumerate(files):
@@ -99,17 +111,22 @@ def accumulate(
 
         # 2-D bincount via flattening: (class * nbins + bin).
         cls_bin = gt * nbins + b
-        totals  += np.bincount(cls_bin, minlength=NUM_CLASSES * nbins) \
-                     .reshape(NUM_CLASSES, nbins)
+        tot_f = np.bincount(cls_bin, minlength=NUM_CLASSES * nbins) \
+                  .reshape(NUM_CLASSES, nbins)
         ok = gt == pr
-        if ok.any():
-            correct += np.bincount(cls_bin[ok], minlength=NUM_CLASSES * nbins) \
-                         .reshape(NUM_CLASSES, nbins)
+        cor_f = (np.bincount(cls_bin[ok], minlength=NUM_CLASSES * nbins)
+                   .reshape(NUM_CLASSES, nbins)
+                 if ok.any() else np.zeros((NUM_CLASSES, nbins), dtype=np.int64))
+
+        pf_totals[i]  = tot_f
+        pf_correct[i] = cor_f
+        totals  += tot_f
+        correct += cor_f
 
         if (i + 1) % 500 == 0 or (i + 1) == len(files):
             print(f"  [{i+1:>5d}/{len(files)}] kept={int(totals.sum()):>12d}  "
                   f"elapsed={time.time()-t0:6.1f}s")
-    return correct, totals, edges
+    return correct, totals, edges, pf_correct, pf_totals
 
 
 def pick_major_classes(totals: np.ndarray, min_frac: float) -> list[int]:
@@ -122,6 +139,41 @@ def pick_major_classes(totals: np.ndarray, min_frac: float) -> list[int]:
     return keep
 
 
+def band_bounds(
+    pf_corr: np.ndarray, pf_tot: np.ndarray, mode: str, pct: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-bin spread of per-frame accuracy.
+
+    pf_corr / pf_tot: (nframes, nbins) correct / total counts. Returns
+    (lo[nbins], hi[nbins]) clipped to [0, 1]; bins with no frames -> NaN.
+      mode="pct": [pct, 100-pct] percentile band across frames.
+      mode="std": mean +/- 1 std.   mode="sem": mean +/- std/sqrt(n).
+    """
+    nbins = pf_tot.shape[1]
+    lo = np.full(nbins, np.nan)
+    hi = np.full(nbins, np.nan)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        acc = np.where(pf_tot > 0, pf_corr / pf_tot, np.nan)
+    for j in range(nbins):
+        col = acc[:, j]
+        col = col[np.isfinite(col)]
+        if col.size == 0:
+            continue
+        if mode == "pct":
+            lo[j] = np.percentile(col, pct)
+            hi[j] = np.percentile(col, 100.0 - pct)
+        else:
+            m = col.mean()
+            s = col.std()
+            if mode == "sem":
+                s = s / np.sqrt(col.size)
+            lo[j] = m - s
+            hi[j] = m + s
+    np.clip(lo, 0.0, 1.0, out=lo)
+    np.clip(hi, 0.0, 1.0, out=hi)
+    return lo, hi
+
+
 def make_plot(
     correct: np.ndarray,
     totals: np.ndarray,
@@ -129,6 +181,10 @@ def make_plot(
     major: list[int],
     out_path: str,
     title_suffix: str,
+    pf_correct: np.ndarray,
+    pf_totals: np.ndarray,
+    band_mode: str = "pct",
+    band_pct: float = 25.0,
 ) -> None:
     nbins = totals.shape[1]
     centers = 0.5 * (edges[:-1] + edges[1:])
@@ -146,11 +202,17 @@ def make_plot(
         tot = totals[c]
         with np.errstate(divide="ignore", invalid="ignore"):
             acc = np.where(tot > 0, correct[c] / tot, np.nan)
+        color = cmap(i % 20)
+        if band_mode != "none":
+            lo, hi = band_bounds(pf_correct[:, c, :], pf_totals[:, c, :],
+                                 band_mode, band_pct)
+            ax_acc.fill_between(centers, lo, hi, color=color, alpha=0.15,
+                                linewidth=0)
         # Skip bins with tiny support so the line doesn't jitter.
         ax_acc.plot(
             centers, acc,
             label=f"{c} {MCD_LABELS[c]} ({int(tot.sum()):,})",
-            color=cmap(i % 20), linewidth=1.6, marker="o", markersize=3,
+            color=color, linewidth=1.6, marker="o", markersize=3,
             alpha=0.9,
         )
 
@@ -158,20 +220,35 @@ def make_plot(
     cor_all = correct.sum(axis=0)
     with np.errstate(divide="ignore", invalid="ignore"):
         acc_all = np.where(tot_all > 0, cor_all / tot_all, np.nan)
+    if band_mode != "none":
+        lo, hi = band_bounds(pf_correct.sum(axis=1), pf_totals.sum(axis=1),
+                             band_mode, band_pct)
+        ax_acc.fill_between(centers, lo, hi, color="black", alpha=0.12,
+                            linewidth=0)
     ax_acc.plot(
         centers, acc_all, label=f"OVERALL ({int(tot_all.sum()):,})",
         color="black", linewidth=2.6, marker="s", markersize=4,
     )
 
+    band_desc = {
+        "pct": f"{band_pct:.0f}-{100 - band_pct:.0f} pct band",
+        "std": "mean +/- 1 std band",
+        "sem": "mean +/- SEM band",
+        "none": "",
+    }[band_mode]
+    legend_title = "class (n points)"
+    if band_desc:
+        legend_title += f"\nshaded = per-frame {band_desc}"
+
     ax_acc.set_ylabel("Accuracy (pred == gt)")
     ax_acc.set_ylim(0.0, 1.02)
     ax_acc.grid(True, alpha=0.3)
     ax_acc.set_title(
-        f"EDL vacuity (K/S) vs accuracy — cenet_mcd_terrain_ntu_tuhh_EDL{title_suffix}"
+        f"EDL vacuity (K/S) vs accuracy — cenet_mcd_relu_mse_W10_kl0p01{title_suffix}"
     )
     ax_acc.legend(
         loc="upper right", fontsize=8, ncol=2, framealpha=0.9,
-        title="class (n points)",
+        title=legend_title,
     )
 
     # ---- Bottom: histogram of points per vacuity bin -----------------
@@ -182,6 +259,92 @@ def make_plot(
     )
     ax_hist.set_yscale("log")
     ax_hist.set_ylabel("# points (log)")
+    ax_hist.set_xlabel("EDL vacuity  K/S   (0 = certain, higher = more uncertain)")
+    ax_hist.grid(True, alpha=0.3, which="both")
+    ax_hist.set_xlim(edges[0], edges[-1])
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=140)
+    print(f"saved: {out_path}")
+
+
+def make_class_plot(
+    correct: np.ndarray,
+    totals: np.ndarray,
+    edges: np.ndarray,
+    c: int,
+    out_path: str,
+    title_suffix: str,
+    pf_correct: np.ndarray,
+    pf_totals: np.ndarray,
+    band_mode: str = "pct",
+    band_pct: float = 25.0,
+) -> None:
+    """Single-class figure: that class's pooled accuracy + per-frame spread
+    band, with the overall line as a faint reference and a histogram of the
+    class's own per-bin point counts."""
+    nbins = totals.shape[1]
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    name = MCD_LABELS[c]
+
+    fig, (ax_acc, ax_hist) = plt.subplots(
+        2, 1, figsize=(11, 7), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1], "hspace": 0.05},
+    )
+
+    tot = totals[c]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        acc = np.where(tot > 0, correct[c] / tot, np.nan)
+
+    # Faint overall reference line.
+    tot_all = totals.sum(axis=0)
+    cor_all = correct.sum(axis=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        acc_all = np.where(tot_all > 0, cor_all / tot_all, np.nan)
+    ax_acc.plot(
+        centers, acc_all, label=f"OVERALL ({int(tot_all.sum()):,})",
+        color="0.6", linewidth=1.5, linestyle="--", alpha=0.8,
+    )
+
+    color = "#1f77b4"
+    if band_mode != "none":
+        lo, hi = band_bounds(pf_correct[:, c, :], pf_totals[:, c, :],
+                             band_mode, band_pct)
+        ax_acc.fill_between(centers, lo, hi, color=color, alpha=0.20,
+                            linewidth=0)
+    ax_acc.plot(
+        centers, acc,
+        label=f"{c} {name} ({int(tot.sum()):,})",
+        color=color, linewidth=2.4, marker="o", markersize=4.5,
+    )
+
+    band_desc = {
+        "pct": f"{band_pct:.0f}-{100 - band_pct:.0f} pct band",
+        "std": "mean +/- 1 std band",
+        "sem": "mean +/- SEM band",
+        "none": "",
+    }[band_mode]
+    legend_title = "class (n points)"
+    if band_desc:
+        legend_title += f"\nshaded = per-frame {band_desc}"
+
+    ax_acc.set_ylabel("Accuracy (pred == gt)")
+    ax_acc.set_ylim(0.0, 1.02)
+    ax_acc.grid(True, alpha=0.3)
+    ax_acc.set_title(
+        f"EDL vacuity (K/S) vs accuracy — {name} — "
+        f"cenet_mcd_relu_mse_W10_kl0p01{title_suffix}"
+    )
+    ax_acc.legend(loc="upper right", fontsize=9, framealpha=0.9,
+                  title=legend_title)
+
+    widths = edges[1:] - edges[:-1]
+    ax_hist.bar(
+        centers, tot, width=widths * 0.95,
+        color=color, edgecolor="black", linewidth=0.4,
+    )
+    ax_hist.set_yscale("log")
+    ax_hist.set_ylabel(f"# {name} points (log)")
     ax_hist.set_xlabel("EDL vacuity  K/S   (0 = certain, higher = more uncertain)")
     ax_hist.grid(True, alpha=0.3, which="both")
     ax_hist.set_xlim(edges[0], edges[-1])
@@ -234,6 +397,14 @@ def main() -> None:
                    help="GT class ids to drop from the analysis (e.g. 0 11).")
     p.add_argument("--limit", type=int, default=None,
                    help="Optional cap on number of frames.")
+    p.add_argument("--band", default="pct", choices=["pct", "std", "sem", "none"],
+                   help="Spread band behind each accuracy line: percentile band "
+                        "(pct), mean+/-std (std), mean+/-SEM (sem), or off (none).")
+    p.add_argument("--band-pct", type=float, default=25.0,
+                   help="Lower percentile for --band pct (band = [p, 100-p]).")
+    p.add_argument("--per-class", action="store_true",
+                   help="Also save one figure per major class next to --out, "
+                        "named <out_stem>_<id>_<class>.png.")
     p.add_argument("--out", default="edl_vacuity_vs_accuracy.png")
     p.add_argument("--csv", default=None,
                    help="Optional CSV path to dump per-bin per-class accuracy.")
@@ -265,7 +436,7 @@ def main() -> None:
         vmax = args.vmax
 
     print(f"\n--- accumulating {args.bins} vacuity bins over [0, {vmax:.4f}] ---")
-    correct, totals, edges = accumulate(
+    correct, totals, edges, pf_correct, pf_totals = accumulate(
         args.gt_dir, args.edl_dir, args.vac_dir, common,
         args.bins, vmax, set(args.ignore),
     )
@@ -309,7 +480,18 @@ def main() -> None:
         print(f"wrote CSV: {args.csv}")
 
     title_suffix = f"  (n={len(common)} frames, {grand:,} pts)"
-    make_plot(correct, totals, edges, major, args.out, title_suffix)
+    make_plot(correct, totals, edges, major, args.out, title_suffix,
+              pf_correct, pf_totals, band_mode=args.band, band_pct=args.band_pct)
+
+    if args.per_class:
+        stem, ext = os.path.splitext(args.out)
+        for c in major:
+            cls_path = f"{stem}_{c}_{MCD_LABELS[c]}{ext or '.png'}"
+            make_class_plot(
+                correct, totals, edges, c, cls_path, title_suffix,
+                pf_correct, pf_totals,
+                band_mode=args.band, band_pct=args.band_pct,
+            )
 
 
 if __name__ == "__main__":
