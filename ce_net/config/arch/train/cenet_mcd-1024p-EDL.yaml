@@ -12,6 +12,7 @@ train:
     kl_strength: 0.1
     kl_warmup_epochs: null  # null => anneal over max_epochs; set e.g. 10 for paper-style warmup
     ohem: null       #  null or float in (0,1) for OHEM
+    class_weight: false  # true => weight EDL data term by inverse class freq (1/(content+epsilon_w)), NLLLoss-style; KL stays uniform
   aux_loss: True
   lamda: 1.0
   scheduler: "consine"  # "consine" or "decay"

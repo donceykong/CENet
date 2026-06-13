@@ -59,6 +59,9 @@ DEFAULT_KL_STRENGTHS = [0.05, 0.1, 0.5]
 # pass --unc-acts exp relu softplus to sweep it.
 DEFAULT_UNC_ACTS = ["exp"]
 DEFAULT_UNC_TYPES = ["log", "mse"]
+# Inverse-frequency class weighting of the EDL data term (evidential.class_weight).
+# Default off so the grid is unchanged unless explicitly swept.
+DEFAULT_CLASS_WEIGHTS = [False]
 
 # Per-dataset keyframe selectors (only MCD is implemented; others raise).
 _KEYFRAME_FNS = {
@@ -111,20 +114,37 @@ def _kl_key(kl):
     return ("kl%g" % kl).replace(".", "p")
 
 
-def build_cells(unc_acts, unc_types, warmup_keys, kl_strengths):
-    """Cross-product of the four axes -> {cell_name: overrides}."""
+def _str2bool(v):
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("true", "1", "yes", "on", "t"):
+        return True
+    if s in ("false", "0", "no", "off", "f"):
+        return False
+    raise argparse.ArgumentTypeError(f"expected a boolean, got '{v}'")
+
+
+def build_cells(unc_acts, unc_types, warmup_keys, kl_strengths, class_weights):
+    """Cross-product of the axes -> {cell_name: overrides}."""
     cells = {}
     for act in unc_acts:
         for unc in unc_types:
             for wkey in warmup_keys:
                 for kl in kl_strengths:
-                    name = f"{act}_{unc}_{wkey}_{_kl_key(kl)}"
-                    cells[name] = {
-                        "unc_act": act,
-                        "unc_type": unc,
-                        "kl_warmup_epochs": WARMUPS[wkey],
-                        "kl_strength": kl,
-                    }
+                    for cw in class_weights:
+                        name = f"{act}_{unc}_{wkey}_{_kl_key(kl)}"
+                        # Only tag the name when weighting is ON, so default-off
+                        # cells keep their existing names (and W&B run names).
+                        if cw:
+                            name += "_cw"
+                        cells[name] = {
+                            "unc_act": act,
+                            "unc_type": unc,
+                            "kl_warmup_epochs": WARMUPS[wkey],
+                            "kl_strength": kl,
+                            "class_weight": cw,
+                        }
     return cells
 
 
@@ -165,6 +185,11 @@ def main():
                     help="KL-warmup axis (cell-name keys). Default: W10 Wmax.")
     ap.add_argument("--kl-strengths", nargs="*", type=float, default=DEFAULT_KL_STRENGTHS,
                     help=f"KL-strength axis. Default: {DEFAULT_KL_STRENGTHS}.")
+    ap.add_argument("--class-weights", nargs="*", type=_str2bool, default=DEFAULT_CLASS_WEIGHTS,
+                    help="Inverse-frequency class-weighting axis for the EDL data "
+                         "term (evidential.class_weight). Default: false. Pass "
+                         "'false true' to sweep both; weighted cells get a '_cw' "
+                         "suffix in the cell/W&B run name.")
     ap.add_argument("--cells", nargs="*", default=None,
                     help="Explicit cell-name subset (e.g. mse_W10_kl0p1). "
                          "Overrides the axis flags when given.")
@@ -184,7 +209,7 @@ def main():
         raise SystemExit("--perc-scans-to-use must be in (0, 1].")
 
     # Build the grid from the axes, then optionally filter to an explicit list.
-    all_cells = build_cells(args.unc_acts, args.unc_types, args.warmups, args.kl_strengths)
+    all_cells = build_cells(args.unc_acts, args.unc_types, args.warmups, args.kl_strengths, args.class_weights)
     if args.cells:
         unknown = [c for c in args.cells if c not in all_cells]
         if unknown:
@@ -240,13 +265,14 @@ def main():
         ev["unc_type"] = overrides["unc_type"]
         ev["kl_warmup_epochs"] = overrides["kl_warmup_epochs"]
         ev["kl_strength"] = overrides["kl_strength"]
+        ev["class_weight"] = overrides["class_weight"]
         if args.epochs is not None:
             ARCH["train"]["max_epochs"] = args.epochs
 
         print(
             f"  unc_act={ev['unc_act']}  unc_type={ev['unc_type']}  kl_warmup_epochs={ev['kl_warmup_epochs']}  "
-            f"kl_strength={ev.get('kl_strength')}  max_epochs={ARCH['train']['max_epochs']}  "
-            f"batch_size={ARCH['train']['batch_size']}"
+            f"kl_strength={ev.get('kl_strength')}  class_weight={ev.get('class_weight')}  "
+            f"max_epochs={ARCH['train']['max_epochs']}  batch_size={ARCH['train']['batch_size']}"
         )
         print(f"  log dir: {FLAGS.log}")
 

@@ -198,6 +198,7 @@ class Trainer:
                     "kl_strength": self.ARCH["train"].get("evidential", {}).get("kl_strength"),
                     "kl_anneal": self.ARCH["train"].get("evidential", {}).get("kl_anneal", True),
                     "kl_warmup_epochs": self.ARCH["train"].get("evidential", {}).get("kl_warmup_epochs"),
+                    "class_weight": self.ARCH["train"].get("evidential", {}).get("class_weight", False),
                     "keyframe_dist": self.ARCH["train"].get("keyframe_subset", {}).get("keyframe_dist"),
                     "perc_scans_to_use": self.ARCH["train"].get("keyframe_subset", {}).get("perc_scans_to_use"),
                 },
@@ -248,6 +249,9 @@ class Trainer:
                 ignore_index=ignore_classes,
                 max_epoch=self.ARCH["train"]["max_epochs"],
                 writer=self.tb_logger,
+                # Inverse-frequency weights (same tensor NLLLoss uses); applied
+                # only when evidential.class_weight is true, else ignored.
+                class_weights=self.loss_w,
             )
         else:
             self.evidential_loss_cal = None

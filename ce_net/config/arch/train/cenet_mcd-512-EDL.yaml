@@ -13,6 +13,7 @@ train:
     kl_anneal: true  # false => static KL coef (= kl_strength) from epoch 0; isolates noise (ignores kl_warmup_epochs)
     kl_warmup_epochs: 10  # only used when kl_anneal: true. paper's min(1.0, epoch/10); null => over max_epochs
     ohem: 0.0       #  null or float in (0,1) for OHEM
+    class_weight: false  # true => weight EDL data term by inverse class freq (1/(content+epsilon_w)), NLLLoss-style; KL stays uniform
   aux_loss: True
   lamda: 1.0
   scheduler: "step"     # "step" (EvSemMap: Adam+StepLR, per-epoch) | "consine" | "decay"

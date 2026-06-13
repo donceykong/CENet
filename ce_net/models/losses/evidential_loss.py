@@ -18,7 +18,7 @@ from math import ceil
 
 
 class EvidentialLossCal:
-    def __init__(self, unc_args, ignore_index=None, max_epoch=100, writer=None):
+    def __init__(self, unc_args, ignore_index=None, max_epoch=100, writer=None, class_weights=None):
         self.unc_act = unc_args.get("unc_act", "exp")
         self.unc_type = unc_args.get("unc_type", "log")
         self.kl_strength = unc_args.get("kl_strength", 0.5)
@@ -30,6 +30,12 @@ class EvidentialLossCal:
         # ramp otherwise makes the training objective non-stationary.
         self.kl_anneal = unc_args.get("kl_anneal", True)
         self.ohem = unc_args.get("ohem")
+        # Optional inverse-frequency class weighting of the EDL data term.
+        # Enabled by `evidential.class_weight` in the arch config; the weight
+        # tensor (1/(content+epsilon_w), ignored classes zeroed) is passed in
+        # from the trainer. Stored as None when disabled so the loss path is
+        # byte-for-byte unchanged in the default case.
+        self.class_weights = class_weights if unc_args.get("class_weight", False) else None
         if self.unc_act == "exp":
             self.activation = lambda x: torch.exp(torch.clamp(x, -10, 10))
         elif self.unc_act == "relu":
@@ -159,6 +165,19 @@ class EvidentialLossCal:
             )
         per_pixel = per_pixel * valid_mask.to(per_pixel.dtype)
 
+        # Optional inverse-frequency class weighting (evidential.class_weight).
+        # Mirror nn.NLLLoss(weight=...): scale each pixel's loss by its true
+        # class weight, then normalise the mean by the SUM of those weights
+        # (not the pixel count) so rare classes dominate the gradient. Only the
+        # EDL data term is weighted; the KL regulariser stays uniform (it's a
+        # Dirichlet prior over the wrong classes, not tied to class frequency).
+        edl_denom = valid_count
+        if self.class_weights is not None:
+            cw = self.class_weights.to(per_pixel.device, dtype=per_pixel.dtype)
+            w_map = torch.sum(labels_1hot * cw.view(1, -1, 1, 1), dim=1, keepdim=True)
+            per_pixel = per_pixel * w_map
+            edl_denom = (w_map * valid_mask.to(per_pixel.dtype)).sum().clamp(min=1e-8)
+
         if self.ohem is not None:
             valid_vals = per_pixel[valid_mask]
             if valid_vals.numel() > 0:
@@ -169,7 +188,7 @@ class EvidentialLossCal:
             else:
                 edl_mean = per_pixel.sum() * 0  # zero with grad lineage
         else:
-            edl_mean = per_pixel.sum() / valid_count
+            edl_mean = per_pixel.sum() / edl_denom
 
         if self.writer is not None:
             self.writer.add_scalar("Loss/evid_loss", edl_mean.item(), self.total_iter)
